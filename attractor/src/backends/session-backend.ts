@@ -88,20 +88,24 @@ export class SessionBackend implements CodergenBackend {
       config: toolCallInterceptor ? { toolCallInterceptor } : undefined,
     });
 
-    await session.submit(prompt);
-
-    // Collect assistant text from session events
+    // Register event consumer BEFORE submit so events are captured
     let assistantText = "";
-    for await (const event of session.events()) {
-      if (event.kind === EventKind.ASSISTANT_TEXT_END) {
-        const text = event.data["text"];
-        if (typeof text === "string") {
-          assistantText = text;
+    const eventConsumer = session.events();
+    const collectEvents = (async () => {
+      for await (const event of eventConsumer) {
+        if (event.kind === EventKind.ASSISTANT_TEXT_END) {
+          const text = event.data["text"];
+          if (typeof text === "string") {
+            assistantText = text;
+          }
         }
+        if (event.kind === EventKind.SESSION_END) break;
       }
-    }
+    })();
 
+    await session.submit(prompt);
     await session.close();
+    await collectEvents;
     return assistantText;
   }
 
@@ -123,17 +127,23 @@ export class SessionBackend implements CodergenBackend {
       this.sessionCache.set(threadId, session);
     }
 
-    await session.submit(prompt);
-
+    // Register event consumer BEFORE submit so events are captured
     let assistantText = "";
-    for await (const event of session.events()) {
-      if (event.kind === EventKind.ASSISTANT_TEXT_END) {
-        const text = event.data["text"];
-        if (typeof text === "string") {
-          assistantText = text;
+    const eventConsumer = session.events();
+    const collectEvents = (async () => {
+      for await (const event of eventConsumer) {
+        if (event.kind === EventKind.ASSISTANT_TEXT_END) {
+          const text = event.data["text"];
+          if (typeof text === "string") {
+            assistantText = text;
+          }
         }
+        if (event.kind === EventKind.SESSION_END) break;
       }
-    }
+    })();
+
+    await session.submit(prompt);
+    await collectEvents;
 
     // Do not close cached sessions - they are reused
     return assistantText;
