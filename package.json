@@ -1,4 +1,4 @@
 {
   "private": true,
-  "workspaces": ["unified-llm", "coding-agent"]
+  "workspaces": ["unified-llm", "coding-agent", "attractor"]
 }
