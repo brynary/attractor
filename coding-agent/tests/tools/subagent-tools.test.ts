@@ -97,14 +97,14 @@ describe("spawn_agent", () => {
     expect(mock.lastOptions?.depthConfig).toEqual({ currentDepth: 2, maxDepth: 3 });
   });
 
-  test("passes undefined depthConfig when no parent depth", async () => {
+  test("defaults to depth 0/1 when no parent depthConfig provided", async () => {
     const agents = new Map<string, SubAgentHandle>();
     const mock = createMockFactory();
     const env = new StubExecutionEnvironment();
     const tool = createSpawnAgentTool(mock.factory, agents);
 
     await tool.executor({ task: "subtask" }, env);
-    expect(mock.lastOptions?.depthConfig).toBeUndefined();
+    expect(mock.lastOptions?.depthConfig).toEqual({ currentDepth: 1, maxDepth: 1 });
   });
 
   test("passes parent executionEnv to factory", async () => {

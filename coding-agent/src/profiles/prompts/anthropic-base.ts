@@ -21,7 +21,7 @@ The old_string must match the file content exactly, including whitespace and ind
 
 ## Project Instructions
 
-Follow project-specific instructions from CLAUDE.md files when present. These files may appear at the project root or in subdirectories and contain conventions, rules, and preferences for the codebase.
+Follow project-specific instructions from AGENTS.md and CLAUDE.md files when present. These files may appear at the project root or in subdirectories and contain conventions, rules, and preferences for the codebase.
 
 ## Code Quality
 

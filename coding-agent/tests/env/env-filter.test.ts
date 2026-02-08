@@ -160,6 +160,37 @@ describe("filterEnvironmentVariables with inherit_all policy", () => {
 describe("filterEnvironmentVariables with inherit_none policy", () => {
   const policy: EnvVarPolicy = "inherit_none";
 
+  test("returns empty object regardless of input", () => {
+    const result = filterEnvironmentVariables(
+      {
+        PATH: "/usr/bin",
+        HOME: "/home/user",
+        MY_CUSTOM: "value",
+        EDITOR: "vim",
+      },
+      policy,
+    );
+
+    expect(result).toEqual({});
+  });
+
+  test("excludes even ALWAYS_INCLUDE vars", () => {
+    const result = filterEnvironmentVariables(
+      {
+        PATH: "/usr/bin",
+        HOME: "/home/user",
+        NODE_PATH: "/usr/lib/node",
+      },
+      policy,
+    );
+
+    expect(result).toEqual({});
+  });
+});
+
+describe("filterEnvironmentVariables with inherit_core_only policy", () => {
+  const policy: EnvVarPolicy = "inherit_core_only";
+
   test("includes only ALWAYS_INCLUDE vars", () => {
     const result = filterEnvironmentVariables(
       {

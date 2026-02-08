@@ -30,7 +30,7 @@ export const OPENAI_BASE_PROMPT = `You are a coding agent that autonomously modi
 
 ## Project Instructions
 
-Check for AGENTS.md or .codex/instructions.md in the project root and follow any project-specific instructions found there.
+Check for AGENTS.md and .codex/instructions.md files in the project root and follow any project-specific instructions found there.
 
 ## Error Handling
 

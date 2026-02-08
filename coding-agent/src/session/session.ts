@@ -261,7 +261,7 @@ export class Session {
 
       // j. Emit (non-streaming path emits ASSISTANT_TEXT_END here;
       //    streaming path already emitted START/DELTA/END in callLLMStreaming)
-      if (!useStreaming) {
+      if (!useStreaming && text) {
         this.emit(EventKind.ASSISTANT_TEXT_START);
         this.emit(EventKind.ASSISTANT_TEXT_END, {
           text,
@@ -322,6 +322,12 @@ export class Session {
 
     // 9. Set state: if the last assistant message ends with '?' and had no tool
     //    calls, the model is asking a question → AWAITING_INPUT; otherwise → IDLE.
+    //    NOTE: The trailing '?' heuristic is a best-effort approximation. The spec
+    //    does not define a definitive mechanism for detecting when the model is
+    //    requesting user input, so we rely on this simple surface-level check.
+    //    It may produce false positives (rhetorical questions) or false negatives
+    //    (questions not ending in '?'). This is acceptable given the lack of a
+    //    reliable signal from the LLM response.
     const lastAssistant = this.history.findLast((t) => t.kind === "assistant");
     const askedQuestion =
       lastAssistant?.kind === "assistant" &&

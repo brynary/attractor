@@ -14,7 +14,7 @@ The old_string must match the file content exactly, including whitespace and ind
 
 ## Project Instructions
 
-Check for a GEMINI.md file in the project root and follow any project-specific instructions found there.
+Check for AGENTS.md and GEMINI.md files in the project root and follow their instructions.
 
 ## Error Handling
 

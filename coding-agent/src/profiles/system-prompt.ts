@@ -23,9 +23,7 @@ export function buildEnvironmentContext(
   if (options?.knowledgeCutoff) {
     lines.push(`Knowledge cutoff: ${options.knowledgeCutoff}`);
   }
-  lines.push("</environment>");
-
-  // Git context snapshot (section 6.4) -- separate from environment block
+  // Git context snapshot (section 6.4)
   if (options?.modifiedCount !== undefined) {
     lines.push(`Modified files: ${options.modifiedCount}`);
   }
@@ -38,6 +36,7 @@ export function buildEnvironmentContext(
       lines.push(`  ${commit}`);
     }
   }
+  lines.push("</environment>");
   return lines.join("\n");
 }
 
@@ -116,7 +115,11 @@ export function buildSystemPrompt(
   projectDocs: string,
   userInstructions?: string,
 ): string {
-  const sections = [basePrompt, envContext, toolDescriptions, projectDocs];
+  const toolSection =
+    toolDescriptions.length > 0
+      ? `## Available Tools\n\n${toolDescriptions}`
+      : "";
+  const sections = [basePrompt, envContext, toolSection, projectDocs];
   if (userInstructions) {
     sections.push(userInstructions);
   }

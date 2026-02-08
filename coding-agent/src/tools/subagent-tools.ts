@@ -49,7 +49,7 @@ export function createSpawnAgentTool(
   return {
     definition: {
       name: "spawn_agent",
-      description: "Spawn a subagent to work on a task independently.",
+      description: "Spawn a subagent to handle a scoped task autonomously.",
       parameters: {
         type: "object",
         properties: {
@@ -66,8 +66,9 @@ export function createSpawnAgentTool(
       },
     },
     executor: async (args, env) => {
-      if (depthConfig && depthConfig.currentDepth >= depthConfig.maxDepth) {
-        return `Error: Subagent spawning is disabled at depth ${depthConfig.currentDepth} (max depth: ${depthConfig.maxDepth})`;
+      const effectiveDepth = depthConfig ?? { currentDepth: 0, maxDepth: 1 };
+      if (effectiveDepth.currentDepth >= effectiveDepth.maxDepth) {
+        return `Error: Subagent spawning is disabled at depth ${effectiveDepth.currentDepth} (max depth: ${effectiveDepth.maxDepth})`;
       }
 
       const task = args.task as string;
@@ -75,9 +76,10 @@ export function createSpawnAgentTool(
       const model = args.model as string | undefined;
       const maxTurns = (args.max_turns as number | undefined) ?? 50;
 
-      const childDepth = depthConfig
-        ? { currentDepth: depthConfig.currentDepth + 1, maxDepth: depthConfig.maxDepth }
-        : undefined;
+      const childDepth: SubAgentDepthConfig = {
+        currentDepth: effectiveDepth.currentDepth + 1,
+        maxDepth: effectiveDepth.maxDepth,
+      };
       const handle = await factory({ task, workingDir, model, maxTurns, depthConfig: childDepth, executionEnv: env });
       agents.set(handle.id, handle);
       return `Spawned agent ${handle.id} (status: ${handle.status})`;
@@ -151,7 +153,7 @@ export function createCloseAgentTool(
   return {
     definition: {
       name: "close_agent",
-      description: "Close a subagent and free its resources.",
+      description: "Terminate a subagent.",
       parameters: {
         type: "object",
         properties: {

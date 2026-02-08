@@ -95,7 +95,7 @@ describe("buildEnvironmentContext", () => {
     expect(modelIdx).toBeLessThan(cutoffIdx);
   });
 
-  test("git context fields appear after </environment> tag", () => {
+  test("git context fields appear inside environment block", () => {
     const env = new StubExecutionEnvironment();
     const result = buildEnvironmentContext(env, {
       isGitRepo: true,
@@ -111,9 +111,9 @@ describe("buildEnvironmentContext", () => {
     const commitsIdx = result.indexOf("Recent commits:");
 
     expect(envCloseIdx).toBeGreaterThan(0);
-    expect(modifiedIdx).toBeGreaterThan(envCloseIdx);
-    expect(untrackedIdx).toBeGreaterThan(envCloseIdx);
-    expect(commitsIdx).toBeGreaterThan(envCloseIdx);
+    expect(modifiedIdx).toBeLessThan(envCloseIdx);
+    expect(untrackedIdx).toBeLessThan(envCloseIdx);
+    expect(commitsIdx).toBeLessThan(envCloseIdx);
   });
 
   test("model and knowledge cutoff are inside environment block", () => {
