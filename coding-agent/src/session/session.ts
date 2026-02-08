@@ -22,15 +22,42 @@ import type {
   Turn,
   SessionEvent,
   EnvironmentContextOptions,
+  ToolRegistry,
 } from "../types/index.js";
 import { SessionState, EventKind, DEFAULT_SESSION_CONFIG } from "../types/index.js";
-import type { SubAgentHandle } from "../tools/subagent-tools.js";
+import type {
+  SubAgentHandle,
+  SubAgentDepthConfig,
+  SessionFactory,
+  SubAgentResult,
+} from "../tools/subagent-tools.js";
+import {
+  createSpawnAgentTool,
+  createSendInputTool,
+  createWaitTool,
+  createCloseAgentTool,
+} from "../tools/subagent-tools.js";
 import { EventEmitter } from "../events/event-emitter.js";
 import { convertHistoryToMessages, countTurns } from "./history.js";
 import { truncateToolOutput } from "../tools/truncation.js";
 import { validateToolArgs } from "../tools/validate-args.js";
 import { detectLoop } from "./loop-detection.js";
 import { discoverProjectDocs } from "../profiles/system-prompt.js";
+import { createOpenAIProfile } from "../profiles/openai-profile.js";
+import { createAnthropicProfile } from "../profiles/anthropic-profile.js";
+import { createGeminiProfile } from "../profiles/gemini-profile.js";
+
+const SUBAGENT_TOOL_NAMES = new Set([
+  "spawn_agent",
+  "send_input",
+  "wait",
+  "close_agent",
+]);
+
+interface ProviderProfileRuntimeMeta {
+  subagentHandles?: Map<string, SubAgentHandle>;
+  subagentDepthConfig?: SubAgentDepthConfig;
+}
 
 export class Session {
   readonly id: string;
@@ -46,6 +73,8 @@ export class Session {
   subagents: Map<string, SubAgentHandle>;
   private abortController: AbortController;
   private runningAbortControllers: Set<AbortController>;
+  private runningToolPromises: Set<Promise<void>>;
+  private closingPromise: Promise<void> | null;
   private gitContext: { isGitRepo: boolean; branch?: string; gitRoot?: string; modifiedCount?: number; untrackedCount?: number; recentCommits?: string[] } | null;
 
   constructor(options: {
@@ -58,16 +87,39 @@ export class Session {
     this.providerProfile = options.providerProfile;
     this.executionEnv = options.executionEnv;
     this.llmClient = options.llmClient;
-    this.config = { ...DEFAULT_SESSION_CONFIG, ...options.config };
+    const defaultCommandTimeoutMs =
+      options.config?.defaultCommandTimeoutMs ??
+      providerDefaultCommandTimeoutMs(options.providerProfile.id);
+    const maxCommandTimeoutMs =
+      options.config?.maxCommandTimeoutMs ??
+      DEFAULT_SESSION_CONFIG.maxCommandTimeoutMs;
+    this.config = {
+      ...DEFAULT_SESSION_CONFIG,
+      ...options.config,
+      defaultCommandTimeoutMs,
+      maxCommandTimeoutMs,
+    };
     this.state = SessionState.IDLE;
     this.history = [];
     this.emitter = new EventEmitter();
     this.steeringQueue = [];
     this.followupQueue = [];
-    this.subagents = new Map();
+    const runtime = this.providerProfile as ProviderProfile & ProviderProfileRuntimeMeta;
+    if (!runtime.subagentHandles) {
+      runtime.subagentHandles = new Map();
+    }
+    this.subagents = runtime.subagentHandles;
+    if (!runtime.subagentDepthConfig) {
+      runtime.subagentDepthConfig = { currentDepth: 0, maxDepth: this.config.maxSubagentDepth };
+    }
+    runtime.subagentDepthConfig.maxDepth = this.config.maxSubagentDepth;
     this.abortController = new AbortController();
     this.runningAbortControllers = new Set();
+    this.runningToolPromises = new Set();
+    this.closingPromise = null;
     this.gitContext = null;
+
+    this.ensureSubagentToolsRegistered();
 
     this.emit(EventKind.SESSION_START);
   }
@@ -99,17 +151,31 @@ export class Session {
     if (this.state === SessionState.CLOSED) {
       return;
     }
+    if (this.closingPromise !== null) {
+      return this.closingPromise;
+    }
+    this.closingPromise = this.performClose();
+    return this.closingPromise;
+  }
+
+  private async performClose(): Promise<void> {
     this.abortController.abort();
     for (const controller of this.runningAbortControllers) {
       controller.abort();
     }
     this.runningAbortControllers.clear();
+    // Await running tool executions with a bounded 5s timeout
+    if (this.runningToolPromises.size > 0) {
+      const pending = Promise.allSettled([...this.runningToolPromises]);
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+      await Promise.race([pending, timeout]);
+    }
     for (const [, agent] of this.subagents) {
       await agent.close();
     }
     this.subagents.clear();
-    this.emit(EventKind.SESSION_END);
     this.state = SessionState.CLOSED;
+    this.emit(EventKind.SESSION_END, { state: this.state });
     this.emitter.close();
   }
 
@@ -233,6 +299,14 @@ export class Session {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         this.emit(EventKind.ERROR, { error: errorMessage });
+        if (isContextOverflowError(errorMessage)) {
+          this.emit(EventKind.WARNING, {
+            type: "context_overflow",
+            message:
+              "Context window overflow detected. The session is closing without automatic compaction.",
+            error: errorMessage,
+          });
+        }
         if (isUnrecoverableError(errorMessage)) {
           hadLLMError = true;
         }
@@ -351,15 +425,26 @@ export class Session {
       toolCalls.length > 1
     ) {
       return Promise.all(
-        toolCalls.map((tc) => this.executeSingleTool(tc)),
+        toolCalls.map((tc) => this.trackToolExecution(tc)),
       );
     }
 
     const results: ToolResult[] = [];
     for (const tc of toolCalls) {
-      results.push(await this.executeSingleTool(tc));
+      results.push(await this.trackToolExecution(tc));
     }
     return results;
+  }
+
+  private trackToolExecution(toolCall: ToolCallData): Promise<ToolResult> {
+    const promise = this.executeSingleTool(toolCall);
+    const tracked = promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.runningToolPromises.add(tracked);
+    tracked.then(() => { this.runningToolPromises.delete(tracked); });
+    return promise;
   }
 
   private async executeSingleTool(toolCall: ToolCallData): Promise<ToolResult> {
@@ -395,6 +480,13 @@ export class Session {
         error: errorMsg,
       });
       return { toolCallId: toolCall.id, content: errorMsg, isError: true };
+    }
+
+    // 3b. Inject session config timeouts for shell tool
+    if (toolCall.name === "shell") {
+      const requestedTimeout = args.timeout_ms as number | undefined;
+      const effectiveTimeout = requestedTimeout ?? this.config.defaultCommandTimeoutMs;
+      args = { ...args, timeout_ms: Math.min(effectiveTimeout, this.config.maxCommandTimeoutMs) };
     }
 
     // 4. Validate arguments against schema (before execution try/catch)
@@ -478,6 +570,196 @@ export class Session {
     }
   }
 
+  private ensureSubagentToolsRegistered(): void {
+    const registry = this.providerProfile.toolRegistry;
+    const hasAllSubagentTools = [...SUBAGENT_TOOL_NAMES].every(
+      (name) => registry.get(name) !== undefined,
+    );
+    if (hasAllSubagentTools) {
+      return;
+    }
+
+    const depthConfig = this.getSubagentDepthConfig();
+    const sessionFactory = this.createInternalSubagentFactory();
+    registry.register(createSpawnAgentTool(sessionFactory, this.subagents, depthConfig));
+    registry.register(createSendInputTool(this.subagents));
+    registry.register(createWaitTool(this.subagents));
+    registry.register(createCloseAgentTool(this.subagents));
+  }
+
+  private getSubagentDepthConfig(): SubAgentDepthConfig {
+    const runtime = this.providerProfile as ProviderProfile & ProviderProfileRuntimeMeta;
+    if (!runtime.subagentDepthConfig) {
+      runtime.subagentDepthConfig = {
+        currentDepth: 0,
+        maxDepth: this.config.maxSubagentDepth,
+      };
+    }
+    runtime.subagentDepthConfig.maxDepth = this.config.maxSubagentDepth;
+    return runtime.subagentDepthConfig;
+  }
+
+  private createInternalSubagentFactory(): SessionFactory {
+    return async ({
+      task,
+      workingDir,
+      model,
+      maxTurns,
+      depthConfig,
+      executionEnv,
+    }) => {
+      const effectiveDepth = depthConfig ?? {
+        currentDepth: this.getSubagentDepthConfig().currentDepth + 1,
+        maxDepth: this.config.maxSubagentDepth,
+      };
+      const childProfile = this.createChildProfileForSubagent(
+        model ?? this.providerProfile.model,
+        effectiveDepth,
+      );
+      const childSession = new Session({
+        providerProfile: childProfile,
+        executionEnv: executionEnv ?? this.executionEnv,
+        llmClient: this.llmClient,
+        config: {
+          ...this.config,
+          maxTurns: maxTurns ?? 50,
+          maxSubagentDepth: this.config.maxSubagentDepth,
+        },
+      });
+
+      let lastResult: SubAgentResult = {
+        output: "",
+        success: true,
+        turnsUsed: countTurns(childSession.history),
+      };
+      let queue = Promise.resolve(lastResult);
+      let activeRun: Promise<SubAgentResult> | null = null;
+
+      const runInput = async (input: string): Promise<SubAgentResult> => {
+        handle.status = "running";
+        try {
+          await childSession.submit(input);
+          const waitingForInput =
+            childSession.state === SessionState.AWAITING_INPUT;
+          const success = childSession.state !== SessionState.CLOSED;
+          if (!success) {
+            handle.status = "failed";
+          } else {
+            handle.status = waitingForInput ? "running" : "completed";
+          }
+          lastResult = {
+            output: this.lastAssistantOutputFromHistory(childSession.history),
+            success,
+            turnsUsed: countTurns(childSession.history),
+          };
+          return lastResult;
+        } catch (error: unknown) {
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          handle.status = "failed";
+          lastResult = {
+            output: `Subagent error: ${errorMessage}`,
+            success: false,
+            turnsUsed: countTurns(childSession.history),
+          };
+          return lastResult;
+        }
+      };
+
+      const enqueue = (input: string): Promise<SubAgentResult> => {
+        const run = queue.then(() => runInput(input));
+        activeRun = run;
+        queue = run.then(
+          (result) => {
+            lastResult = result;
+            activeRun = null;
+            return result;
+          },
+          (error) => {
+            activeRun = null;
+            throw error;
+          },
+        );
+        return run;
+      };
+
+      const handle: SubAgentHandle = {
+        id: childSession.id,
+        status: "running",
+        session: childSession,
+        submit: async (input: string): Promise<void> => {
+          await enqueue(input);
+        },
+        waitForCompletion: async (): Promise<SubAgentResult> => {
+          if (activeRun) {
+            return activeRun;
+          }
+          return lastResult;
+        },
+        close: async (): Promise<void> => {
+          await childSession.close();
+          if (handle.status === "running") {
+            handle.status = "failed";
+          }
+        },
+      };
+
+      void enqueue(task);
+      return handle;
+    };
+  }
+
+  private createChildProfileForSubagent(
+    model: string,
+    depthConfig: SubAgentDepthConfig,
+  ): ProviderProfile {
+    let childProfile: ProviderProfile;
+    switch (this.providerProfile.id) {
+      case "openai":
+        childProfile = createOpenAIProfile(model, {
+          subagentConfig: depthConfig,
+        });
+        break;
+      case "anthropic":
+        childProfile = createAnthropicProfile(model, {
+          subagentConfig: depthConfig,
+        });
+        break;
+      case "gemini":
+        childProfile = createGeminiProfile(model, {
+          subagentConfig: depthConfig,
+        });
+        break;
+      default:
+        childProfile = this.providerProfile;
+        break;
+    }
+
+    if (childProfile !== this.providerProfile) {
+      this.copyParentToolsForSubagent(childProfile.toolRegistry);
+    }
+    return childProfile;
+  }
+
+  private copyParentToolsForSubagent(childRegistry: ToolRegistry): void {
+    for (const tool of this.providerProfile.toolRegistry.entries()) {
+      if (SUBAGENT_TOOL_NAMES.has(tool.definition.name)) {
+        continue;
+      }
+      childRegistry.register(tool);
+    }
+  }
+
+  private lastAssistantOutputFromHistory(history: readonly Turn[]): string {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turn = history[i];
+      if (turn?.kind === "assistant" && turn.content.trim().length > 0) {
+        return turn.content;
+      }
+    }
+    return "";
+  }
+
   private async callLLMStreaming(request: LLMRequest): Promise<LLMResponse> {
     const accumulator = new StreamAccumulator(request.provider);
     let emittedTextStart = false;
@@ -535,6 +817,12 @@ export class Session {
       } else if (turn.kind === "assistant") {
         totalChars += turn.content.length;
         if (turn.reasoning) totalChars += turn.reasoning.length;
+        for (const tc of turn.toolCalls) {
+          totalChars += tc.name.length;
+          totalChars += typeof tc.arguments === "string"
+            ? tc.arguments.length
+            : JSON.stringify(tc.arguments).length;
+        }
       } else if (turn.kind === "tool_results") {
         for (const r of turn.results) {
           totalChars += typeof r.content === "string" ? r.content.length : JSON.stringify(r.content).length;
@@ -628,10 +916,28 @@ function isUnrecoverableError(message: string): boolean {
     lower.includes("401") ||
     lower.includes("invalid api key") ||
     lower.includes("invalid_api_key") ||
+    isContextOverflowError(lower)
+  );
+}
+
+function isContextOverflowError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
     lower.includes("context_length_exceeded") ||
     lower.includes("context overflow") ||
     lower.includes("context window") ||
     lower.includes("max_tokens") ||
     lower.includes("maximum context length")
   );
+}
+
+function providerDefaultCommandTimeoutMs(providerId: string): number {
+  switch (providerId) {
+    case "anthropic":
+      return 120_000;
+    case "openai":
+    case "gemini":
+    default:
+      return 10_000;
+  }
 }

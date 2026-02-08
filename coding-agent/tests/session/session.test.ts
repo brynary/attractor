@@ -6,7 +6,8 @@ import { Session } from "../../src/session/session.js";
 import { createAnthropicProfile } from "../../src/profiles/anthropic-profile.js";
 import { StubExecutionEnvironment } from "../stubs/stub-env.js";
 import type { SessionEvent } from "../../src/types/index.js";
-import { EventKind, SessionState } from "../../src/types/index.js";
+import { EventKind, SessionState, DEFAULT_SESSION_CONFIG } from "../../src/types/index.js";
+import type { SubAgentHandle } from "../../src/tools/subagent-tools.js";
 
 function makeTextResponse(text: string): LLMResponse {
   return {
@@ -67,6 +68,22 @@ function createTestSession(
     config: options?.config,
   });
   return { session, adapter, env };
+}
+
+function createFakeSubAgentHandle(overrides: { close: () => Promise<void> }): SubAgentHandle {
+  return {
+    id: "test-agent",
+    status: "running",
+    session: {
+      id: "test-session",
+      state: SessionState.IDLE,
+      history: [],
+      config: DEFAULT_SESSION_CONFIG,
+    },
+    submit: async () => {},
+    waitForCompletion: async () => ({ output: "", success: true, turnsUsed: 0 }),
+    close: overrides.close,
+  };
 }
 
 async function collectEvents(
@@ -587,6 +604,30 @@ describe("Session", () => {
     expect(session.state).toBe(SessionState.CLOSED);
   });
 
+  test("context overflow emits WARNING event before session closes", async () => {
+    const adapter = new StubAdapter("anthropic", [
+      { error: new Error("context_length_exceeded: maximum context length is 200000") },
+    ]);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    await session.submit("trigger context overflow");
+
+    const events = await eventsPromise;
+    const warning = events.find(
+      (e) => e.kind === EventKind.WARNING && e.data.type === "context_overflow",
+    );
+    expect(warning).toBeDefined();
+    expect(String(warning?.data.message ?? "")).toContain("Context window overflow");
+  });
+
   test("truncation config passes per-tool limits from session config", async () => {
     // Create a file with content longer than 10 chars
     const longContent = "x".repeat(100);
@@ -704,6 +745,31 @@ describe("Session", () => {
     expect(contextWarning?.data.estimatedTokens).toBeGreaterThan(160_000);
   });
 
+  test("context window warning includes tool call names and arguments in estimation", async () => {
+    // contextWindowSize for anthropic profile is 200_000 tokens
+    // 80% threshold = 160_000 tokens = 640_000 chars at 4 chars/token
+    // Use tool call arguments large enough to exceed the threshold
+    const largeArgs = { data: "y".repeat(640_004) };
+    const toolCallResp = makeToolCallResponse([
+      { id: "tc-big", name: "read_file", arguments: largeArgs },
+    ]);
+    const files = new Map([["/test/foo.ts", "content"]]);
+    const { session } = createTestSession(
+      [toolCallResp, makeTextResponse("done")],
+      { files },
+    );
+
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
+    await session.submit("run it");
+
+    const events = await eventsPromise;
+    const contextWarning = events.find(
+      (e) => e.kind === EventKind.WARNING && e.data.type === "context_warning",
+    );
+    expect(contextWarning).toBeDefined();
+    expect(contextWarning?.data.estimatedTokens).toBeGreaterThan(160_000);
+  });
+
   test("streaming emits ASSISTANT_TEXT_START, DELTA, and END events", async () => {
     const streamEvents: StreamEvent[] = [
       { type: StreamEventType.STREAM_START, id: "resp-stream", model: "test-model" },
@@ -776,9 +842,9 @@ describe("Session", () => {
 
     // Add a fake subagent to verify close() cleans it up
     let subagentClosed = false;
-    session.subagents.set("test-agent", {
+    session.subagents.set("test-agent", createFakeSubAgentHandle({
       close: async () => { subagentClosed = true; },
-    } as import("../../src/tools/subagent-tools.js").SubAgentHandle);
+    }));
 
     await session.submit("trigger error");
 
@@ -801,9 +867,9 @@ describe("Session", () => {
 
     // Add a fake subagent to verify close() cleans it up
     let subagentClosed = false;
-    session.subagents.set("test-agent", {
+    session.subagents.set("test-agent", createFakeSubAgentHandle({
       close: async () => { subagentClosed = true; },
-    } as import("../../src/tools/subagent-tools.js").SubAgentHandle);
+    }));
 
     await session.close();
 
@@ -973,6 +1039,78 @@ describe("Session", () => {
     expect(contextWarning?.data["message"]).toContain("% of context window");
   });
 
+  test("close() awaits running tool executions before emitting SESSION_END", async () => {
+    let resolveToolStarted: () => void = () => {};
+    const toolStarted = new Promise<void>((resolve) => { resolveToolStarted = resolve; });
+    let resolveToolFinished: () => void = () => {};
+    const toolFinished = new Promise<void>((resolve) => { resolveToolFinished = resolve; });
+
+    const adapter = new StubAdapter(
+      "anthropic",
+      [
+        { response: makeToolCallResponse([
+          { id: "tc1", name: "slow_tool", arguments: {} },
+        ]) },
+        { response: makeTextResponse("done") },
+      ],
+    );
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    profile.toolRegistry.register({
+      definition: {
+        name: "slow_tool",
+        description: "A slow tool",
+        parameters: { type: "object", properties: {} },
+      },
+      executor: async () => {
+        resolveToolStarted();
+        await toolFinished;
+        return "done";
+      },
+    });
+
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    // Start processing — will block on the slow tool
+    const submitPromise = session.submit("run slow tool");
+
+    // Wait for the tool to actually start executing
+    await toolStarted;
+
+    // Track whether close() has completed
+    let closeDone = false;
+    const closePromise = session.close().then(() => { closeDone = true; });
+
+    // Give close() a tick to run — it should be waiting for the tool
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(closeDone).toBe(false);
+
+    // Now resolve the tool — close() should complete
+    resolveToolFinished();
+    await closePromise;
+
+    expect(closeDone).toBe(true);
+    expect(session.state).toBe(SessionState.CLOSED);
+
+    // Let submit settle (it exits due to abort)
+    await submitPromise.catch(() => {});
+  });
+
+  test("close() does not hang when no tools are running", async () => {
+    const { session } = createTestSession([makeTextResponse("hi")]);
+
+    await session.submit("test");
+
+    // close() should complete promptly with no running tools
+    await session.close();
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
   test("transient LLM error emits ERROR event but allows retry", async () => {
     const adapter = new StubAdapter("anthropic", [
       { error: new Error("rate limit exceeded") },
@@ -994,5 +1132,112 @@ describe("Session", () => {
     await session.submit("retry");
     expect(session.state).toBe(SessionState.IDLE);
     expect(session.history.filter((t) => t.kind === "assistant")).toHaveLength(1);
+  });
+
+  test("shell tool uses config.defaultCommandTimeoutMs when no timeout_ms provided", async () => {
+    let capturedArgs: Record<string, unknown> | undefined;
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          { id: "tc1", name: "shell", arguments: { command: "echo hello" } },
+        ]),
+        makeTextResponse("done"),
+      ],
+      {
+        config: {
+          defaultCommandTimeoutMs: 30_000,
+          toolCallInterceptor: {
+            pre: async (_name, args) => {
+              capturedArgs = args;
+              return true;
+            },
+          },
+        },
+      },
+    );
+
+    await session.submit("run command");
+
+    expect(capturedArgs).toBeDefined();
+    expect(capturedArgs?.timeout_ms).toBe(30_000);
+  });
+
+  test("shell tool clamps timeout_ms to config.maxCommandTimeoutMs", async () => {
+    let capturedArgs: Record<string, unknown> | undefined;
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          { id: "tc1", name: "shell", arguments: { command: "echo hello", timeout_ms: 999_999 } },
+        ]),
+        makeTextResponse("done"),
+      ],
+      {
+        config: {
+          maxCommandTimeoutMs: 60_000,
+          toolCallInterceptor: {
+            pre: async (_name, args) => {
+              capturedArgs = args;
+              return true;
+            },
+          },
+        },
+      },
+    );
+
+    await session.submit("run command");
+
+    expect(capturedArgs).toBeDefined();
+    expect(capturedArgs?.timeout_ms).toBe(60_000);
+  });
+
+  test("shell tool uses LLM-provided timeout_ms when within max limit", async () => {
+    let capturedArgs: Record<string, unknown> | undefined;
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          { id: "tc1", name: "shell", arguments: { command: "echo hello", timeout_ms: 45_000 } },
+        ]),
+        makeTextResponse("done"),
+      ],
+      {
+        config: {
+          defaultCommandTimeoutMs: 10_000,
+          maxCommandTimeoutMs: 600_000,
+          toolCallInterceptor: {
+            pre: async (_name, args) => {
+              capturedArgs = args;
+              return true;
+            },
+          },
+        },
+      },
+    );
+
+    await session.submit("run command");
+
+    expect(capturedArgs).toBeDefined();
+    expect(capturedArgs?.timeout_ms).toBe(45_000);
+  });
+
+  test("subagent tools are registered by Session even without sessionFactory", async () => {
+    const { session } = createTestSession([makeTextResponse("child finished")]);
+
+    const names = session.providerProfile.toolRegistry.names();
+    expect(names).toContain("spawn_agent");
+    expect(names).toContain("send_input");
+    expect(names).toContain("wait");
+    expect(names).toContain("close_agent");
+  });
+
+  test("maxSubagentDepth=0 disables spawn_agent", async () => {
+    const { session, env } = createTestSession(
+      [makeTextResponse("unused")],
+      { config: { maxSubagentDepth: 0 } },
+    );
+
+    const spawn = session.providerProfile.toolRegistry.get("spawn_agent");
+    expect(spawn).toBeDefined();
+    const result = await spawn!.executor({ task: "do work" }, env);
+    expect(result).toContain("disabled at depth 0");
   });
 });

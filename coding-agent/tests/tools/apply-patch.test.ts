@@ -4,7 +4,7 @@ import {
   parsePatch,
   applyPatch,
   applyHunks,
-  normalizeWhitespace,
+  normalizeForFuzzyMatch,
   createApplyPatchTool,
 } from "../../src/tools/apply-patch.js";
 import type { ExecutionEnvironment } from "../../src/types/execution-env.js";
@@ -14,6 +14,13 @@ describe("parsePatch", () => {
     expect(() => parsePatch("some random text")).toThrow(
       "missing '*** Begin Patch'",
     );
+  });
+
+  test("throws on missing End Patch", () => {
+    const patch = `*** Begin Patch
+*** Add File: src/hello.ts
++export const hello = "world";`;
+    expect(() => parsePatch(patch)).toThrow("missing '*** End Patch'");
   });
 
   test("parses add file operation", () => {
@@ -195,21 +202,45 @@ describe("createApplyPatchTool", () => {
   });
 });
 
-describe("normalizeWhitespace", () => {
+describe("normalizeForFuzzyMatch", () => {
   test("collapses multiple spaces to single space", () => {
-    expect(normalizeWhitespace("foo   bar")).toBe("foo bar");
+    expect(normalizeForFuzzyMatch("foo   bar")).toBe("foo bar");
   });
 
   test("collapses tabs to single space", () => {
-    expect(normalizeWhitespace("foo\t\tbar")).toBe("foo bar");
+    expect(normalizeForFuzzyMatch("foo\t\tbar")).toBe("foo bar");
   });
 
   test("trims trailing whitespace", () => {
-    expect(normalizeWhitespace("foo bar   ")).toBe("foo bar");
+    expect(normalizeForFuzzyMatch("foo bar   ")).toBe("foo bar");
   });
 
   test("preserves leading whitespace but normalizes it", () => {
-    expect(normalizeWhitespace("  foo  bar")).toBe(" foo bar");
+    expect(normalizeForFuzzyMatch("  foo  bar")).toBe(" foo bar");
+  });
+
+  test("normalizes curly double quotes to straight double quotes", () => {
+    expect(normalizeForFuzzyMatch("say \u201Chello\u201D")).toBe('say "hello"');
+  });
+
+  test("normalizes curly single quotes to straight single quotes", () => {
+    expect(normalizeForFuzzyMatch("it\u2019s \u2018fine\u2019")).toBe("it's 'fine'");
+  });
+
+  test("normalizes em-dash and en-dash to hyphen", () => {
+    expect(normalizeForFuzzyMatch("a\u2014b\u2013c")).toBe("a-b-c");
+  });
+
+  test("normalizes non-breaking space to regular space", () => {
+    expect(normalizeForFuzzyMatch("foo\u00A0bar")).toBe("foo bar");
+  });
+
+  test("normalizes ellipsis to three dots", () => {
+    expect(normalizeForFuzzyMatch("wait\u2026")).toBe("wait...");
+  });
+
+  test("combines whitespace and Unicode normalization", () => {
+    expect(normalizeForFuzzyMatch("  \u201Chello\u201D\t\t world\u2026  ")).toBe(' "hello" world...');
   });
 });
 
@@ -245,6 +276,23 @@ describe("applyHunks fuzzy matching", () => {
       },
     ]);
     expect(result).toContain("a = 10");
+  });
+
+  test("matches when file has smart quotes but hunk has straight quotes", () => {
+    const content = "function greet() {\n  console.log(\u201Chello\u201D);\n}";
+    const result = applyHunks(content, [
+      {
+        contextHint: "function greet",
+        lines: [
+          { kind: "context", content: "function greet() {" },
+          { kind: "delete", content: '  console.log("hello");' },
+          { kind: "add", content: '  console.log("goodbye");' },
+          { kind: "context", content: "}" },
+        ],
+      },
+    ]);
+    expect(result).toContain("goodbye");
+    expect(result).not.toContain("hello");
   });
 
   test("throws when even fuzzy matching fails", () => {

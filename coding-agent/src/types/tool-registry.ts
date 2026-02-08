@@ -25,6 +25,10 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
+  entries(): RegisteredTool[] {
+    return [...this.tools.values()];
+  }
+
   definitions(): ToolDefinition[] {
     return [...this.tools.values()].map((t) => t.definition);
   }

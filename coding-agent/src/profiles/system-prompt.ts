@@ -52,7 +52,7 @@ export async function discoverProjectDocs(
   const searchDirs = buildSearchDirs(gitRoot, cwd);
 
   const parts: string[] = [];
-  let totalLength = 0;
+  let totalBytes = 0;
 
   for (const dir of searchDirs) {
     for (const name of candidates) {
@@ -69,22 +69,34 @@ export async function discoverProjectDocs(
           return pipeIndex >= 0 ? line.slice(pipeIndex + 3) : line;
         })
         .join("\n");
+      const contentBytes = Buffer.byteLength(content, "utf-8");
 
-      if (totalLength + content.length > PROJECT_DOCS_BUDGET) {
-        const remaining = PROJECT_DOCS_BUDGET - totalLength;
-        if (remaining > 0) {
-          parts.push(content.slice(0, remaining));
-          parts.push("[Project instructions truncated at 32KB]");
+      if (totalBytes + contentBytes > PROJECT_DOCS_BUDGET) {
+        const remainingBytes = PROJECT_DOCS_BUDGET - totalBytes;
+        if (remainingBytes > 0) {
+          parts.push(truncateToUtf8Bytes(content, remainingBytes));
         }
+        parts.push("[Project instructions truncated at 32KB]");
         return parts.join("\n\n");
       }
 
       parts.push(content);
-      totalLength += content.length;
+      totalBytes += contentBytes;
     }
   }
 
   return parts.join("\n\n");
+}
+
+function truncateToUtf8Bytes(input: string, maxBytes: number): string {
+  if (Buffer.byteLength(input, "utf-8") <= maxBytes) {
+    return input;
+  }
+  let end = input.length;
+  while (end > 0 && Buffer.byteLength(input.slice(0, end), "utf-8") > maxBytes) {
+    end--;
+  }
+  return input.slice(0, end);
 }
 
 function buildSearchDirs(gitRoot: string | undefined, cwd: string): string[] {

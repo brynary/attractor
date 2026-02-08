@@ -35,6 +35,8 @@ export function createGeminiProfile(
   options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
 ): ProviderProfile {
   const registry = new ToolRegistry();
+  const agents = new Map<string, SubAgentHandle>();
+  const depthConfig = options?.subagentConfig ?? { currentDepth: 0, maxDepth: 1 };
   registry.register(createReadFileTool());
   registry.register(createWriteFileTool());
   registry.register(createEditFileTool());
@@ -49,8 +51,6 @@ export function createGeminiProfile(
   registry.register(createWebFetchTool());
 
   if (options?.sessionFactory) {
-    const agents = new Map<string, SubAgentHandle>();
-    const depthConfig = options.subagentConfig ?? { currentDepth: 0, maxDepth: 1 };
     registry.register(createSpawnAgentTool(options.sessionFactory, agents, depthConfig));
     registry.register(createSendInputTool(agents));
     registry.register(createWaitTool(agents));
@@ -107,5 +107,7 @@ export function createGeminiProfile(
     supportsStreaming: true,
     supportsParallelToolCalls: true,
     contextWindowSize: 1_000_000,
+    subagentHandles: agents,
+    subagentDepthConfig: depthConfig,
   };
 }

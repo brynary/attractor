@@ -1,11 +1,19 @@
 import type { RegisteredTool, ExecutionEnvironment } from "../types/index.js";
 
 /**
- * Collapse runs of whitespace to a single space and trim trailing whitespace.
- * Used for fuzzy matching when exact hunk match fails.
+ * Normalize a line for fuzzy matching: collapse whitespace, normalize Unicode
+ * punctuation (smart quotes, dashes, non-breaking spaces, ellipsis) to their
+ * ASCII equivalents, and trim trailing whitespace.
  */
-export function normalizeWhitespace(line: string): string {
-  return line.replace(/[ \t]+/g, " ").replace(/\s+$/, "");
+export function normalizeForFuzzyMatch(line: string): string {
+  return line
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/\u00A0/g, " ")
+    .replace(/\u2026/g, "...")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+$/, "");
 }
 
 export interface PatchOperation {
@@ -29,6 +37,7 @@ export interface HunkLine {
 export function parsePatch(patch: string): PatchOperation[] {
   const lines = patch.split("\n");
   let i = 0;
+  let sawEndPatch = false;
 
   // Find "*** Begin Patch"
   while (i < lines.length && lines[i]?.trim() !== "*** Begin Patch") {
@@ -45,6 +54,7 @@ export function parsePatch(patch: string): PatchOperation[] {
     const line = lines[i] ?? "";
 
     if (line.trim() === "*** End Patch") {
+      sawEndPatch = true;
       break;
     }
 
@@ -115,6 +125,10 @@ export function parsePatch(patch: string): PatchOperation[] {
     }
   }
 
+  if (!sawEndPatch) {
+    throw new Error("Invalid patch: missing '*** End Patch'");
+  }
+
   return operations;
 }
 
@@ -164,11 +178,11 @@ export function applyHunks(content: string, hunks: Hunk[]): string {
 
     // Fuzzy match fallback: normalize whitespace and retry
     if (matchStart === -1) {
-      const normalizedSearch = searchLines.map(normalizeWhitespace);
+      const normalizedSearch = searchLines.map(normalizeForFuzzyMatch);
       for (let j = offset; j <= fileLines.length - searchLines.length; j++) {
         let matches = true;
         for (let k = 0; k < normalizedSearch.length; k++) {
-          if (normalizeWhitespace(fileLines[j + k] ?? "") !== normalizedSearch[k]) {
+          if (normalizeForFuzzyMatch(fileLines[j + k] ?? "") !== normalizedSearch[k]) {
             matches = false;
             break;
           }
@@ -214,6 +228,17 @@ function shellEscapePath(path: string): string {
   return `'${path.replace(/'/g, "'\\''")}'`;
 }
 
+function powershellEscapePath(path: string): string {
+  return path.replace(/'/g, "''");
+}
+
+function deleteCommandForPath(path: string, platform: string): string {
+  if (platform === "win32" || platform === "windows") {
+    return `powershell -NoProfile -Command "Remove-Item -LiteralPath '${powershellEscapePath(path)}' -Force -Recurse"`;
+  }
+  return `rm -- ${shellEscapePath(path)}`;
+}
+
 export async function applyPatch(
   patch: string,
   env: ExecutionEnvironment,
@@ -233,7 +258,7 @@ export async function applyPatch(
         if (!exists) {
           throw new Error(`Cannot delete non-existent file: ${op.path}`);
         }
-        await env.execCommand(`rm -- ${shellEscapePath(op.path)}`, 5000);
+        await env.execCommand(deleteCommandForPath(op.path, env.platform()), 5000);
         summaries.push(`Deleted ${op.path}`);
         break;
       }
@@ -244,7 +269,7 @@ export async function applyPatch(
 
         if (op.newPath !== undefined) {
           await env.writeFile(op.newPath, updated);
-          await env.execCommand(`rm -- ${shellEscapePath(op.path)}`, 5000);
+          await env.execCommand(deleteCommandForPath(op.path, env.platform()), 5000);
           summaries.push(`Updated and moved ${op.path} -> ${op.newPath}`);
         } else {
           await env.writeFile(op.path, updated);

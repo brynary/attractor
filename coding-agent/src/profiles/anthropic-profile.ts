@@ -29,6 +29,8 @@ export function createAnthropicProfile(
   options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
 ): ProviderProfile {
   const registry = new ToolRegistry();
+  const agents = new Map<string, SubAgentHandle>();
+  const depthConfig = options?.subagentConfig ?? { currentDepth: 0, maxDepth: 1 };
   registry.register(createReadFileTool());
   registry.register(createWriteFileTool());
   registry.register(createEditFileTool());
@@ -39,8 +41,6 @@ export function createAnthropicProfile(
   registry.register(createGlobTool());
 
   if (options?.sessionFactory) {
-    const agents = new Map<string, SubAgentHandle>();
-    const depthConfig = options.subagentConfig ?? { currentDepth: 0, maxDepth: 1 };
     registry.register(createSpawnAgentTool(options.sessionFactory, agents, depthConfig));
     registry.register(createSendInputTool(agents));
     registry.register(createWaitTool(agents));
@@ -94,5 +94,7 @@ export function createAnthropicProfile(
     supportsStreaming: true,
     supportsParallelToolCalls: true,
     contextWindowSize: 200_000,
+    subagentHandles: agents,
+    subagentDepthConfig: depthConfig,
   };
 }

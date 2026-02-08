@@ -71,18 +71,29 @@ export function createWebSearchTool(): RegisteredTool {
         required: ["query"],
       },
     },
-    executor: async (args, env) => {
+    executor: async (args) => {
       const query = args.query as string;
       const maxResults = (args.max_results as number | undefined) ?? 5;
       const encoded = encodeURIComponent(query);
-      const command = `curl -s "https://html.duckduckgo.com/html/?q=${encoded}" | sed -n 's/.*<a rel="nofollow" class="result__a" href="\\([^"]*\\)">/\\1/p' | head -n ${maxResults}`;
-      const result = await env.execCommand(command, 15_000);
-
-      if (result.exitCode !== 0) {
-        return `Search failed (exit code ${result.exitCode}):\n${result.stderr}`;
+      const response = await fetch(`https://html.duckduckgo.com/html/?q=${encoded}`);
+      if (!response.ok) {
+        return `Search failed (status ${response.status}): ${response.statusText}`;
       }
 
-      return result.stdout || "No results found.";
+      const html = await response.text();
+      const links: string[] = [];
+      const regex = /<a[^>]+class="result__a"[^>]+href="([^"]+)"/g;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(html)) !== null && links.length < maxResults) {
+        const link = match[1];
+        if (!link) continue;
+        links.push(link);
+      }
+
+      if (links.length === 0) {
+        return "No results found.";
+      }
+      return links.join("\n");
     },
   };
 }
@@ -104,16 +115,21 @@ export function createWebFetchTool(): RegisteredTool {
         required: ["url"],
       },
     },
-    executor: async (args, env) => {
+    executor: async (args) => {
       const url = args.url as string;
-      const command = `curl -sL ${JSON.stringify(url)} | head -c 50000`;
-      const result = await env.execCommand(command, 30_000);
-
-      if (result.exitCode !== 0) {
-        return `Fetch failed (exit code ${result.exitCode}):\n${result.stderr}`;
+      let response: Response;
+      try {
+        response = await fetch(url);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return `Fetch failed: ${message}`;
+      }
+      if (!response.ok) {
+        return `Fetch failed (status ${response.status}): ${response.statusText}`;
       }
 
-      return result.stdout || "No content returned.";
+      const content = await response.text();
+      return content.length > 50_000 ? content.slice(0, 50_000) : content;
     },
   };
 }

@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "unified-llm";
 import type { ToolRegistry } from "./tool-registry.js";
 import type { ExecutionEnvironment } from "./execution-env.js";
+import type { SubAgentHandle, SubAgentDepthConfig } from "../tools/subagent-tools.js";
 
 export interface EnvironmentContextOptions {
   isGitRepo?: boolean;
@@ -17,6 +18,8 @@ export interface ProviderProfile {
   model: string;
   toolRegistry: ToolRegistry;
   knowledgeCutoff?: string;
+  subagentHandles?: Map<string, SubAgentHandle>;
+  subagentDepthConfig?: SubAgentDepthConfig;
   buildSystemPrompt(
     environment: ExecutionEnvironment,
     projectDocs: string,

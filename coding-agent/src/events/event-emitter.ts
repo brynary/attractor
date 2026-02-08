@@ -45,17 +45,22 @@ export class EventEmitter {
 
     async function* generate(): AsyncGenerator<SessionEvent> {
       try {
-        while (!consumer.closed) {
+        while (true) {
           const queued = consumer.queue.shift();
           if (queued) {
             yield queued;
-          } else {
-            const event = await new Promise<SessionEvent | null>((resolve) => {
-              consumer.waiters.push(resolve);
-            });
-            if (event === null) break;
-            yield event;
+            continue;
           }
+
+          if (consumer.closed) {
+            break;
+          }
+
+          const event = await new Promise<SessionEvent | null>((resolve) => {
+            consumer.waiters.push(resolve);
+          });
+          if (event === null) break;
+          yield event;
         }
       } finally {
         consumer.closed = true;
@@ -70,10 +75,12 @@ export class EventEmitter {
   close(): void {
     for (const consumer of this.consumers) {
       consumer.closed = true;
-      for (const waiter of consumer.waiters) {
-        waiter(null);
+      while (consumer.waiters.length > 0) {
+        const waiter = consumer.waiters.shift();
+        if (!waiter) continue;
+        const queued = consumer.queue.shift();
+        waiter(queued ?? null);
       }
-      consumer.waiters.length = 0;
     }
   }
 }

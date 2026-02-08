@@ -1,6 +1,6 @@
 import type { RegisteredTool } from "../types/index.js";
 import type { ExecutionEnvironment } from "../types/index.js";
-import { normalizeWhitespace } from "./apply-patch.js";
+import { normalizeForFuzzyMatch } from "./apply-patch.js";
 
 const IMAGE_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico",
@@ -27,6 +27,28 @@ function getExtension(filePath: string): string {
 
 function isImageFile(filePath: string): boolean {
   return IMAGE_EXTENSIONS.has(getExtension(filePath));
+}
+
+function isWindowsPlatform(platform: string): boolean {
+  return platform === "win32" || platform === "windows";
+}
+
+function powershellEscapeLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function imageSizeCommand(filePath: string, platform: string): string {
+  if (isWindowsPlatform(platform)) {
+    return `powershell -NoProfile -Command "(Get-Item -LiteralPath '${powershellEscapeLiteral(filePath)}').Length"`;
+  }
+  return `wc -c < '${filePath.replace(/'/g, "'\\''")}'`;
+}
+
+function imageBase64Command(filePath: string, platform: string): string {
+  if (isWindowsPlatform(platform)) {
+    return `powershell -NoProfile -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('${powershellEscapeLiteral(filePath)}'))"`;
+  }
+  return `base64 < '${filePath.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -74,11 +96,9 @@ export function createReadFileTool(): RegisteredTool {
           throw new Error(`File not found: ${filePath}`);
         }
 
+        const platform = env.platform();
         // Use shell to get file size
-        const sizeResult = await env.execCommand(
-          `wc -c < '${filePath.replace(/'/g, "'\\''")}'`,
-          5000,
-        );
+        const sizeResult = await env.execCommand(imageSizeCommand(filePath, platform), 5000);
         const fileSize = parseInt(sizeResult.stdout.trim(), 10);
 
         if (isNaN(fileSize) || fileSize > MAX_IMAGE_SIZE) {
@@ -87,10 +107,7 @@ export function createReadFileTool(): RegisteredTool {
         }
 
         // Read as base64
-        const b64Result = await env.execCommand(
-          `base64 < '${filePath.replace(/'/g, "'\\''")}'`,
-          5000,
-        );
+        const b64Result = await env.execCommand(imageBase64Command(filePath, platform), 5000);
         const base64Data = b64Result.stdout.replace(/\s/g, "");
         const ext = getExtension(filePath);
         const mimeType = MIME_TYPES[ext] ?? "application/octet-stream";
@@ -176,8 +193,8 @@ export function createEditFileTool(): RegisteredTool {
       }
 
       // Fuzzy match fallback: normalize whitespace and retry
-      const normalizedContent = rawContent.split("\n").map(normalizeWhitespace).join("\n");
-      const normalizedOld = oldString.split("\n").map(normalizeWhitespace).join("\n");
+      const normalizedContent = rawContent.split("\n").map(normalizeForFuzzyMatch).join("\n");
+      const normalizedOld = oldString.split("\n").map(normalizeForFuzzyMatch).join("\n");
 
       if (!normalizedContent.includes(normalizedOld)) {
         throw new Error(`old_string not found in ${filePath}`);
