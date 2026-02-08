@@ -161,6 +161,12 @@ describe("Client", () => {
       type: StreamEventType.STREAM_START,
       model: "test",
     });
+    const finish = events.at(2);
+    expect(finish?.type).toBe(StreamEventType.FINISH);
+    if (finish?.type === StreamEventType.FINISH) {
+      expect(finish.response).toBeDefined();
+      expect(finish.response?.provider).toBe("test");
+    }
   });
 
   test("initialize calls initialize on all adapters", async () => {

@@ -4,7 +4,16 @@ import { Client } from "../../src/client/client.js";
 import { StubAdapter } from "../stubs/stub-adapter.js";
 import type { StreamEvent } from "../../src/types/stream-event.js";
 import { StreamEventType } from "../../src/types/stream-event.js";
-import { ServerError, AuthenticationError, RequestTimeoutError, ConfigurationError, UnsupportedToolChoiceError, StreamError } from "../../src/types/errors.js";
+import {
+  AbortError,
+  ServerError,
+  AuthenticationError,
+  RequestTimeoutError,
+  ConfigurationError,
+  UnsupportedToolChoiceError,
+  StreamError,
+} from "../../src/types/errors.js";
+import { getLatestModel } from "../../src/models/catalog.js";
 
 function makeStreamEvents(text: string): StreamEvent[] {
   return [
@@ -47,6 +56,25 @@ describe("stream", () => {
     expect(collected).toHaveLength(5);
     expect(collected[0]?.type).toBe(StreamEventType.STREAM_START);
     expect(collected[2]?.type).toBe(StreamEventType.TEXT_DELTA);
+  });
+
+  test("defaults to latest model when model is omitted", async () => {
+    const latest = getLatestModel("openai");
+    expect(latest).toBeDefined();
+    const adapter = new StubAdapter("openai", [{ events: makeStreamEvents("Hello") }]);
+    const client = new Client({
+      providers: { openai: adapter },
+      defaultProvider: "openai",
+    });
+
+    const result = stream({
+      prompt: "hello",
+      client,
+    });
+
+    await result.response();
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.model).toBe(latest?.id);
   });
 
   test("rejects when both prompt and messages are provided", () => {
@@ -108,12 +136,32 @@ describe("stream", () => {
     const response = await result.response();
     expect(response.finishReason.reason).toBe("stop");
     expect(response.usage.inputTokens).toBe(10);
+    expect(response.provider).toBe("stub");
     // Check accumulated text
     const textPart = response.message.content.find((c) => c.kind === "text");
     expect(textPart).toBeDefined();
     if (textPart && textPart.kind === "text") {
       expect(textPart.text).toBe("Accumulated");
     }
+  });
+
+  test("passes metadata through to adapter requests", async () => {
+    const events = makeStreamEvents("meta");
+    const adapter = new StubAdapter("stub", [{ events }]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      metadata: { traceId: "trace-123", tenant: "acme" },
+      client,
+    });
+
+    await result.response();
+    expect(adapter.calls[0]?.metadata).toEqual({
+      traceId: "trace-123",
+      tenant: "acme",
+    });
   });
 
   test("response() works when called before iteration", async () => {
@@ -369,6 +417,35 @@ describe("stream", () => {
       expect(errorEvent.error).toBeInstanceOf(StreamError);
       expect(errorEvent.error.message).toContain("stream exploded");
     }
+  });
+
+  test("throws AbortError when stream is cancelled", async () => {
+    const adapter = {
+      name: "stub",
+      async complete() {
+        throw new Error("not used");
+      },
+      async *stream(): AsyncGenerator<StreamEvent> {
+        yield { type: StreamEventType.STREAM_START, model: "test-model" };
+        throw new AbortError("Request was aborted");
+      },
+    };
+    const client = new Client({
+      providers: { stub: adapter },
+      defaultProvider: "stub",
+    });
+
+    const result = stream({
+      model: "test-model",
+      prompt: "hello",
+      client,
+    });
+
+    await expect(async () => {
+      for await (const _event of result) {
+        // consume
+      }
+    }).toThrow(AbortError);
   });
 
   test("stopWhen emits FINISH event before stopping", async () => {

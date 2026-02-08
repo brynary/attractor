@@ -337,6 +337,17 @@ describe("Anthropic request translator", () => {
     expect(body.stop_sequences).toEqual(["END"]);
   });
 
+  test("passes metadata through", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Hi" }] }],
+      metadata: { traceId: "trace-123", tenant: "acme" },
+    };
+
+    const { body } = translateRequest(request);
+    expect(body.metadata).toEqual({ traceId: "trace-123", tenant: "acme" });
+  });
+
   test("passes thinking provider option through", () => {
     const request: Request = {
       model: "claude-opus-4-6",

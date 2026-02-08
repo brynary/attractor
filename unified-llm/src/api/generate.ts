@@ -14,6 +14,7 @@ import type { RetryPolicy } from "../utils/retry.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
 import type { StepResult, GenerateResult, StopCondition } from "./types.js";
+import { getLatestModel } from "../models/catalog.js";
 
 export type { ToolExecutionContext } from "../types/tool.js";
 
@@ -28,8 +29,8 @@ function toAdapterTimeout(timeout: number | TimeoutConfig, remainingMs?: number)
 }
 
 export interface GenerateOptions {
-  /** Model identifier (e.g., "gpt-5.2", "claude-opus-4-6", "gemini-3-flash-preview") */
-  model: string;
+  /** Model identifier (e.g., "gpt-5.2", "claude-opus-4-6", "gemini-3-flash-preview"). Defaults to latest known model for the resolved provider. */
+  model?: string;
   /** Single-turn text prompt (mutually exclusive with messages) */
   prompt?: string;
   /** Multi-turn message history (mutually exclusive with prompt) */
@@ -60,6 +61,8 @@ export interface GenerateOptions {
   provider?: string;
   /** Provider-specific options escape hatch */
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** Metadata key-value pairs */
+  metadata?: Record<string, string>;
   /** Maximum retry attempts for transient failures (default: 2) */
   maxRetries?: number;
   /** Custom retry policy */
@@ -133,6 +136,13 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   }
 
   const client = options.client ?? getDefaultClient();
+  const provider = client.resolveProvider(options.provider).name;
+  const model = options.model ?? getLatestModel(provider)?.id;
+  if (!model) {
+    throw new ConfigurationError(
+      `No model specified and no catalog default available for provider "${provider}"`,
+    );
+  }
 
   if (options.tools) {
     for (const tool of options.tools) {
@@ -197,9 +207,9 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
       }
     }
     const request: Request = {
-      model: options.model,
+      model,
       messages: [...messages],
-      provider: options.provider,
+      provider,
       tools: options.tools,
       toolChoice: options.toolChoice,
       responseFormat: options.responseFormat,
@@ -208,6 +218,7 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
       maxTokens: options.maxTokens,
       stopSequences: options.stopSequences,
       reasoningEffort: options.reasoningEffort,
+      metadata: options.metadata,
       providerOptions: options.providerOptions,
       timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout, remainingMs) : undefined,
       abortSignal: options.abortSignal,

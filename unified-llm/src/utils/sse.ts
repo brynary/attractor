@@ -1,6 +1,7 @@
 export interface SSEEvent {
   event: string;
   data: string;
+  retry?: number;
 }
 
 export async function* parseSSE(
@@ -10,6 +11,7 @@ export async function* parseSSE(
   let buffer = "";
   let currentEvent = "message";
   let dataLines: string[] = [];
+  let currentRetry: number | undefined;
 
   const reader = stream.getReader();
 
@@ -20,7 +22,12 @@ export async function* parseSSE(
       if (done) {
         // Flush any remaining event
         if (dataLines.length > 0) {
-          yield { event: currentEvent, data: dataLines.join("\n") };
+          const data = dataLines.join("\n");
+          if (currentRetry !== undefined) {
+            yield { event: currentEvent, data, retry: currentRetry };
+          } else {
+            yield { event: currentEvent, data };
+          }
         }
         break;
       }
@@ -35,9 +42,15 @@ export async function* parseSSE(
         if (line === "" || line === "\r") {
           // Blank line = event boundary
           if (dataLines.length > 0) {
-            yield { event: currentEvent, data: dataLines.join("\n") };
+            const data = dataLines.join("\n");
+            if (currentRetry !== undefined) {
+              yield { event: currentEvent, data, retry: currentRetry };
+            } else {
+              yield { event: currentEvent, data };
+            }
             dataLines = [];
             currentEvent = "message";
+            currentRetry = undefined;
           }
           continue;
         }
@@ -66,6 +79,11 @@ export async function* parseSSE(
           currentEvent = value_;
         } else if (field === "data") {
           dataLines.push(value_);
+        } else if (field === "retry") {
+          const retryValue = Number(value_);
+          if (Number.isFinite(retryValue) && retryValue >= 0) {
+            currentRetry = retryValue;
+          }
         }
       }
     }

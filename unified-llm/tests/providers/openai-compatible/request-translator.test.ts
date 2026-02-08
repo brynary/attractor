@@ -380,6 +380,16 @@ describe("OpenAI-Compatible Request Translator", () => {
     expect(body.stop).toEqual(["END", "STOP"]);
   });
 
+  test("passes metadata through", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Hi" }] }],
+      metadata: { traceId: "trace-123", tenant: "acme" },
+    });
+
+    const { body } = translateRequest(request, false);
+    expect(body.metadata).toEqual({ traceId: "trace-123", tenant: "acme" });
+  });
+
   test("translates responseFormat json_schema", () => {
     const request = makeRequest({
       messages: [

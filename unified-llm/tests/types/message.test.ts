@@ -98,6 +98,21 @@ describe("messageText", () => {
     expect(messageText(msg)).toBe("Hello world");
   });
 
+  test("accepts custom content kinds and ignores them for text extraction", () => {
+    const msg = {
+      role: Role.ASSISTANT,
+      content: [
+        { kind: "text" as const, text: "Hello" },
+        {
+          kind: "provider_extension" as const,
+          data: { token: "abc" },
+        },
+        { kind: "text" as const, text: " world" },
+      ],
+    };
+    expect(messageText(msg)).toBe("Hello world");
+  });
+
   test("returns empty string when no text parts", () => {
     const msg = {
       role: Role.ASSISTANT,

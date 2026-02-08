@@ -1,6 +1,6 @@
 import type { Request } from "../../types/request.js";
 import type { Message } from "../../types/message.js";
-import type { ContentPart } from "../../types/content-part.js";
+import type { ExtendedContentPart } from "../../types/content-part.js";
 import type { Warning } from "../../types/response.js";
 import {
   isTextPart,
@@ -20,7 +20,7 @@ interface TranslatePartResult {
   warning?: Warning;
 }
 
-function translateContentPartToInput(part: ContentPart): TranslatePartResult {
+function translateContentPartToInput(part: ExtendedContentPart): TranslatePartResult {
   if (isTextPart(part)) {
     return { translated: { type: "input_text", text: part.text } };
   }
@@ -53,7 +53,9 @@ function translateContentPartToInput(part: ContentPart): TranslatePartResult {
   return { translated: undefined };
 }
 
-function translateAssistantContentPart(part: ContentPart): Record<string, unknown> | undefined {
+function translateAssistantContentPart(
+  part: ExtendedContentPart,
+): Record<string, unknown> | undefined {
   if (isTextPart(part)) {
     return { type: "output_text", text: part.text };
   }
@@ -251,6 +253,11 @@ export function translateRequest(
   // Stop sequences
   if (request.stopSequences && request.stopSequences.length > 0) {
     body.stop = request.stopSequences;
+  }
+
+  // Metadata
+  if (request.metadata && Object.keys(request.metadata).length > 0) {
+    body.metadata = request.metadata;
   }
 
   // Reasoning effort

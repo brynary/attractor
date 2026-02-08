@@ -6,6 +6,7 @@ import { StubAdapter } from "../stubs/stub-adapter.js";
 import type { Response } from "../../src/types/response.js";
 import { Role } from "../../src/types/role.js";
 import { ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError } from "../../src/types/errors.js";
+import { getLatestModel } from "../../src/models/catalog.js";
 
 function makeResponse(
   text: string,
@@ -62,6 +63,26 @@ describe("generate", () => {
     expect(result.totalUsage.inputTokens).toBe(10);
   });
 
+  test("defaults to latest model when model is omitted", async () => {
+    const latest = getLatestModel("openai");
+    expect(latest).toBeDefined();
+    const adapter = new StubAdapter("openai", [
+      { response: makeResponse("Hello world") },
+    ]);
+    client = new Client({
+      providers: { openai: adapter },
+      defaultProvider: "openai",
+    });
+
+    await generate({
+      prompt: "Say hello",
+      client,
+    });
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.model).toBe(latest?.id);
+  });
+
   test("generation with messages", async () => {
     const adapter = new StubAdapter("stub", [
       { response: makeResponse("Hi there") },
@@ -80,6 +101,25 @@ describe("generate", () => {
     expect(adapter.calls).toHaveLength(1);
     const sentMessages = adapter.calls[0]?.messages;
     expect(sentMessages).toHaveLength(1);
+  });
+
+  test("passes metadata through to adapter requests", async () => {
+    const adapter = new StubAdapter("stub", [
+      { response: makeResponse("Hi there") },
+    ]);
+    setup(adapter);
+
+    await generate({
+      model: "test-model",
+      prompt: "hello",
+      metadata: { traceId: "trace-123", tenant: "acme" },
+      client,
+    });
+
+    expect(adapter.calls[0]?.metadata).toEqual({
+      traceId: "trace-123",
+      tenant: "acme",
+    });
   });
 
   test("generation with system message prepends it", async () => {

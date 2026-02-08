@@ -41,18 +41,29 @@ interface ToolCallAccumulator {
   argumentsBuffer: string;
 }
 
+interface TextSegment {
+  id: string;
+  text: string;
+  order: number;
+}
+
 interface ReasoningSegment {
+  id: string;
   text: string;
   redacted: boolean;
+  order: number;
   signature?: string;
 }
 
 export class StreamAccumulator {
-  private textParts: string[] = [];
-  private currentText = "";
-  private reasoningSegments: ReasoningSegment[] = [];
-  private currentReasoning = "";
-  private currentReasoningRedacted = false;
+  private textSegments: Map<string, TextSegment> = new Map();
+  private activeTextSegmentIds: string[] = [];
+  private nextTextOrder = 0;
+  private nextImplicitTextId = 0;
+  private reasoningSegments: Map<string, ReasoningSegment> = new Map();
+  private activeReasoningSegmentIds: string[] = [];
+  private nextReasoningOrder = 0;
+  private nextImplicitReasoningId = 0;
   private toolCalls: Map<string, ToolCallAccumulator> = new Map();
   private completedToolCalls: ToolCallData[] = [];
   private streamId = "";
@@ -71,6 +82,112 @@ export class StreamAccumulator {
     this.provider = provider;
   }
 
+  private ensureTextSegment(id: string): TextSegment {
+    const existing = this.textSegments.get(id);
+    if (existing) {
+      return existing;
+    }
+    const created: TextSegment = { id, text: "", order: this.nextTextOrder++ };
+    this.textSegments.set(id, created);
+    return created;
+  }
+
+  private ensureReasoningSegment(id: string): ReasoningSegment {
+    const existing = this.reasoningSegments.get(id);
+    if (existing) {
+      return existing;
+    }
+    const created: ReasoningSegment = {
+      id,
+      text: "",
+      redacted: false,
+      order: this.nextReasoningOrder++,
+    };
+    this.reasoningSegments.set(id, created);
+    return created;
+  }
+
+  private activateTextSegment(id: string): void {
+    const idx = this.activeTextSegmentIds.lastIndexOf(id);
+    if (idx !== -1) {
+      this.activeTextSegmentIds.splice(idx, 1);
+    }
+    this.activeTextSegmentIds.push(id);
+  }
+
+  private deactivateTextSegment(id?: string): void {
+    if (id === undefined) {
+      this.activeTextSegmentIds.pop();
+      return;
+    }
+    const idx = this.activeTextSegmentIds.lastIndexOf(id);
+    if (idx !== -1) {
+      this.activeTextSegmentIds.splice(idx, 1);
+    }
+  }
+
+  private activateReasoningSegment(id: string): void {
+    const idx = this.activeReasoningSegmentIds.lastIndexOf(id);
+    if (idx !== -1) {
+      this.activeReasoningSegmentIds.splice(idx, 1);
+    }
+    this.activeReasoningSegmentIds.push(id);
+  }
+
+  private deactivateReasoningSegment(id?: string): void {
+    if (id === undefined) {
+      this.activeReasoningSegmentIds.pop();
+      return;
+    }
+    const idx = this.activeReasoningSegmentIds.lastIndexOf(id);
+    if (idx !== -1) {
+      this.activeReasoningSegmentIds.splice(idx, 1);
+    }
+  }
+
+  private resolveTextSegmentId(
+    explicitId: string | undefined,
+    createIfMissing: boolean,
+  ): string | undefined {
+    if (explicitId && explicitId.length > 0) {
+      return explicitId;
+    }
+    const active = this.activeTextSegmentIds[this.activeTextSegmentIds.length - 1];
+    if (active) {
+      return active;
+    }
+    if (!createIfMissing) {
+      return undefined;
+    }
+    return `text_${this.nextImplicitTextId++}`;
+  }
+
+  private resolveReasoningSegmentId(
+    explicitId: string | undefined,
+    createIfMissing: boolean,
+  ): string | undefined {
+    if (explicitId && explicitId.length > 0) {
+      return explicitId;
+    }
+    const active =
+      this.activeReasoningSegmentIds[this.activeReasoningSegmentIds.length - 1];
+    if (active) {
+      return active;
+    }
+    if (!createIfMissing) {
+      return undefined;
+    }
+    return `reasoning_${this.nextImplicitReasoningId++}`;
+  }
+
+  private sortedTextSegments(): TextSegment[] {
+    return [...this.textSegments.values()].sort((a, b) => a.order - b.order);
+  }
+
+  private sortedReasoningSegments(): ReasoningSegment[] {
+    return [...this.reasoningSegments.values()].sort((a, b) => a.order - b.order);
+  }
+
   process(event: StreamEvent): void {
     switch (event.type) {
       case StreamEventType.STREAM_START:
@@ -86,44 +203,78 @@ export class StreamAccumulator {
         break;
 
       case StreamEventType.TEXT_START:
-        this.currentText = "";
+        {
+          const id = this.resolveTextSegmentId(event.textId, true);
+          if (id) {
+            this.ensureTextSegment(id);
+            this.activateTextSegment(id);
+          }
+        }
         break;
 
       case StreamEventType.TEXT_DELTA:
-        this.currentText += event.delta;
+        {
+          const id = this.resolveTextSegmentId(event.textId, true);
+          if (id) {
+            const segment = this.ensureTextSegment(id);
+            segment.text += event.delta;
+            if (event.textId) {
+              this.activateTextSegment(id);
+            }
+          }
+        }
         break;
 
       case StreamEventType.TEXT_END:
-        if (this.currentText) {
-          this.textParts.push(this.currentText);
+        {
+          const id = this.resolveTextSegmentId(event.textId, false);
+          if (id) {
+            this.deactivateTextSegment(id);
+          } else {
+            this.deactivateTextSegment();
+          }
         }
-        this.currentText = "";
         break;
 
       case StreamEventType.REASONING_START:
-        this.currentReasoning = "";
-        this.currentReasoningRedacted = false;
+        {
+          const id = this.resolveReasoningSegmentId(event.reasoningId, true);
+          if (id) {
+            this.ensureReasoningSegment(id);
+            this.activateReasoningSegment(id);
+          }
+        }
         break;
 
       case StreamEventType.REASONING_DELTA:
-        this.currentReasoning += event.reasoningDelta;
-        if (event.redacted) {
-          this.currentReasoningRedacted = true;
+        {
+          const id = this.resolveReasoningSegmentId(event.reasoningId, true);
+          if (id) {
+            const segment = this.ensureReasoningSegment(id);
+            segment.text += event.reasoningDelta;
+            if (event.redacted) {
+              segment.redacted = true;
+            }
+            if (event.reasoningId) {
+              this.activateReasoningSegment(id);
+            }
+          }
         }
         break;
 
       case StreamEventType.REASONING_END:
-        if (this.currentReasoning || this.currentReasoningRedacted) {
-          this.reasoningSegments.push({
-            text: this.currentReasoning,
-            redacted: this.currentReasoningRedacted,
-            signature: this.currentReasoningRedacted
-              ? undefined
-              : event.signature,
-          });
+        {
+          const id = this.resolveReasoningSegmentId(event.reasoningId, false);
+          if (id) {
+            const segment = this.reasoningSegments.get(id);
+            if (segment && !segment.redacted && event.signature) {
+              segment.signature = event.signature;
+            }
+            this.deactivateReasoningSegment(id);
+          } else {
+            this.deactivateReasoningSegment();
+          }
         }
-        this.currentReasoning = "";
-        this.currentReasoningRedacted = false;
         break;
 
       case StreamEventType.TOOL_CALL_START:
@@ -186,7 +337,10 @@ export class StreamAccumulator {
     const content: ContentPart[] = [];
 
     // Add reasoning parts first
-    for (const segment of this.reasoningSegments) {
+    for (const segment of this.sortedReasoningSegments()) {
+      if (!segment.redacted && segment.text.length === 0) {
+        continue;
+      }
       if (segment.redacted) {
         content.push({
           kind: "redacted_thinking",
@@ -208,8 +362,9 @@ export class StreamAccumulator {
     }
 
     // Add text parts
-    const fullText =
-      this.textParts.join("") + (this.currentText ? this.currentText : "");
+    const fullText = this.sortedTextSegments()
+      .map((segment) => segment.text)
+      .join("");
     if (fullText) {
       content.push({ kind: "text", text: fullText });
     }
@@ -241,11 +396,14 @@ export class StreamAccumulator {
    * Resets the accumulator state for the new step while preserving step history.
    */
   beginStep(): void {
-    this.textParts = [];
-    this.currentText = "";
-    this.reasoningSegments = [];
-    this.currentReasoning = "";
-    this.currentReasoningRedacted = false;
+    this.textSegments.clear();
+    this.activeTextSegmentIds = [];
+    this.nextTextOrder = 0;
+    this.nextImplicitTextId = 0;
+    this.reasoningSegments.clear();
+    this.activeReasoningSegmentIds = [];
+    this.nextReasoningOrder = 0;
+    this.nextImplicitReasoningId = 0;
     this.toolCalls.clear();
     this.completedToolCalls = [];
     this.finishReason = { reason: "other" };

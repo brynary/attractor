@@ -34,6 +34,25 @@ describe("StreamAccumulator", () => {
     expect(response.usage.outputTokens).toBe(5);
   });
 
+  test("handles interleaved text segments by textId", () => {
+    const acc = new StreamAccumulator();
+    acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
+    acc.process({ type: StreamEventType.TEXT_START, textId: "a" });
+    acc.process({ type: StreamEventType.TEXT_DELTA, textId: "a", delta: "Hello" });
+    acc.process({ type: StreamEventType.TEXT_START, textId: "b" });
+    acc.process({ type: StreamEventType.TEXT_DELTA, textId: "b", delta: " world" });
+    acc.process({ type: StreamEventType.TEXT_DELTA, textId: "a", delta: "!" });
+    acc.process({ type: StreamEventType.TEXT_END, textId: "a" });
+    acc.process({ type: StreamEventType.TEXT_END, textId: "b" });
+    acc.process({ type: StreamEventType.FINISH, finishReason: { reason: "stop" } });
+
+    const response = acc.response();
+    expect(response.message.content[0]).toEqual({
+      kind: "text",
+      text: "Hello! world",
+    });
+  });
+
   test("accumulates tool call events", () => {
     const acc = new StreamAccumulator();
     acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
@@ -99,6 +118,54 @@ describe("StreamAccumulator", () => {
     expect(response.message.content[1]).toEqual({
       kind: "text",
       text: "Answer",
+    });
+  });
+
+  test("handles interleaved reasoning segments by reasoningId", () => {
+    const acc = new StreamAccumulator();
+    acc.process({ type: StreamEventType.STREAM_START, model: "test-model" });
+    acc.process({ type: StreamEventType.REASONING_START, reasoningId: "r1" });
+    acc.process({
+      type: StreamEventType.REASONING_DELTA,
+      reasoningId: "r1",
+      reasoningDelta: "Think ",
+    });
+    acc.process({ type: StreamEventType.REASONING_START, reasoningId: "r2" });
+    acc.process({
+      type: StreamEventType.REASONING_DELTA,
+      reasoningId: "r2",
+      reasoningDelta: "deep",
+    });
+    acc.process({
+      type: StreamEventType.REASONING_DELTA,
+      reasoningId: "r1",
+      reasoningDelta: "more",
+    });
+    acc.process({
+      type: StreamEventType.REASONING_END,
+      reasoningId: "r1",
+      signature: "sig-r1",
+    });
+    acc.process({ type: StreamEventType.REASONING_END, reasoningId: "r2" });
+    acc.process({ type: StreamEventType.FINISH, finishReason: { reason: "stop" } });
+
+    const response = acc.response();
+    expect(response.message.content).toHaveLength(2);
+    expect(response.message.content[0]).toEqual({
+      kind: "thinking",
+      thinking: {
+        text: "Think more",
+        signature: "sig-r1",
+        redacted: false,
+      },
+    });
+    expect(response.message.content[1]).toEqual({
+      kind: "thinking",
+      thinking: {
+        text: "deep",
+        signature: undefined,
+        redacted: false,
+      },
     });
   });
 

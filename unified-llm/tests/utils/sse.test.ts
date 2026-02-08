@@ -91,4 +91,15 @@ describe("parseSSE", () => {
     expect(events[0]).toEqual({ event: "message", data: "hello" });
     expect(events[1]).toEqual({ event: "message", data: "world" });
   });
+
+  test("parses retry field when present", async () => {
+    const data = "event: update\nretry: 1500\ndata: payload\n\n";
+    const events = await collectEvents(makeStream(data));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      event: "update",
+      data: "payload",
+      retry: 1500,
+    });
+  });
 });

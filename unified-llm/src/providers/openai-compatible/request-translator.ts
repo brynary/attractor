@@ -1,6 +1,6 @@
 import type { Request } from "../../types/request.js";
 import type { Message } from "../../types/message.js";
-import type { ContentPart } from "../../types/content-part.js";
+import type { ExtendedContentPart } from "../../types/content-part.js";
 import type { Warning } from "../../types/response.js";
 import {
   isTextPart,
@@ -12,7 +12,7 @@ import { Role } from "../../types/role.js";
 import { encodeImageToDataUri } from "../../utils/schema-translate.js";
 
 function translateContentPart(
-  part: ContentPart,
+  part: ExtendedContentPart,
 ): Record<string, unknown> | undefined {
   if (isTextPart(part)) {
     return { type: "text", text: part.text };
@@ -208,6 +208,11 @@ export function translateRequest(
   // Stop sequences
   if (request.stopSequences && request.stopSequences.length > 0) {
     body.stop = request.stopSequences;
+  }
+
+  // Metadata
+  if (request.metadata && Object.keys(request.metadata).length > 0) {
+    body.metadata = request.metadata;
   }
 
   // Response format

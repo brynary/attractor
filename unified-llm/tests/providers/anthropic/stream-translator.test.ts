@@ -185,6 +185,7 @@ describe("Anthropic stream translator", () => {
     expect(events.at(2)).toEqual({
       type: StreamEventType.REASONING_DELTA,
       reasoningDelta: "Let me think...",
+      reasoningId: "0",
     });
     expect(events.at(3)?.type).toBe(StreamEventType.REASONING_END);
     expect(events.at(4)?.type).toBe(StreamEventType.TEXT_START);
@@ -339,6 +340,7 @@ describe("Anthropic stream translator", () => {
     expect(events.at(2)).toEqual({
       type: StreamEventType.REASONING_DELTA,
       reasoningDelta: "opaque-data",
+      reasoningId: "0",
       redacted: true,
     });
     expect(events.at(3)?.type).toBe(StreamEventType.REASONING_END);

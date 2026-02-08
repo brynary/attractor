@@ -1,9 +1,14 @@
 import type { Request } from "../types/request.js";
-import type { ContentPart, ImagePart, AudioPart, DocumentPart } from "../types/content-part.js";
+import type {
+  ExtendedContentPart,
+  ImagePart,
+  AudioPart,
+  DocumentPart,
+} from "../types/content-part.js";
 import type { Message } from "../types/message.js";
 import { isLocalFilePath, readImageFile } from "./file-image.js";
 
-function isFileImagePart(part: ContentPart): part is ImagePart {
+function isFileImagePart(part: ExtendedContentPart): part is ImagePart {
   return (
     part.kind === "image" &&
     typeof part.image.url === "string" &&
@@ -11,7 +16,7 @@ function isFileImagePart(part: ContentPart): part is ImagePart {
   );
 }
 
-function isFileAudioPart(part: ContentPart): part is AudioPart {
+function isFileAudioPart(part: ExtendedContentPart): part is AudioPart {
   return (
     part.kind === "audio" &&
     typeof part.audio.url === "string" &&
@@ -19,7 +24,7 @@ function isFileAudioPart(part: ContentPart): part is AudioPart {
   );
 }
 
-function isFileDocumentPart(part: ContentPart): part is DocumentPart {
+function isFileDocumentPart(part: ExtendedContentPart): part is DocumentPart {
   return (
     part.kind === "document" &&
     typeof part.document.url === "string" &&
@@ -27,11 +32,14 @@ function isFileDocumentPart(part: ContentPart): part is DocumentPart {
   );
 }
 
-function isFileContentPart(part: ContentPart): boolean {
+function isFileContentPart(part: ExtendedContentPart): boolean {
   return isFileImagePart(part) || isFileAudioPart(part) || isFileDocumentPart(part);
 }
 
-async function resolveContentPart(part: ContentPart, provider?: string): Promise<ContentPart> {
+async function resolveContentPart(
+  part: ExtendedContentPart,
+  provider?: string,
+): Promise<ExtendedContentPart> {
   if (isFileImagePart(part)) {
     const url = part.image.url;
     if (url === undefined) {

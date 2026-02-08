@@ -9,13 +9,14 @@ import type { TimeoutConfig } from "../types/timeout.js";
 import { StreamAccumulator } from "../utils/stream-accumulator.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
-import { ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError, InvalidToolCallError, SDKError, StreamError } from "../types/errors.js";
+import { AbortError, ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError, InvalidToolCallError, SDKError, StreamError } from "../types/errors.js";
 import { validateToolName } from "../utils/validate-tool-name.js";
 import { validateJsonSchema } from "../utils/validate-json-schema.js";
 import { retry } from "../utils/retry.js";
 import type { RetryPolicy } from "../utils/retry.js";
 import type { GenerateOptions, ToolExecutionContext } from "./generate.js";
 import type { StepResult, StreamResult } from "./types.js";
+import { getLatestModel } from "../models/catalog.js";
 
 function toAdapterTimeout(timeout: number | TimeoutConfig, remainingMs?: number): AdapterTimeout {
   if (typeof timeout === "number") {
@@ -158,6 +159,13 @@ export function stream(options: StreamOptions): StreamResult {
   }
 
   const client = options.client ?? getDefaultClient();
+  const provider = client.resolveProvider(options.provider).name;
+  const model = options.model ?? getLatestModel(provider)?.id;
+  if (!model) {
+    throw new ConfigurationError(
+      `No model specified and no catalog default available for provider "${provider}"`,
+    );
+  }
 
   if (options.tools) {
     for (const tool of options.tools) {
@@ -223,9 +231,9 @@ export function stream(options: StreamOptions): StreamResult {
         }
       }
       const request = {
-        model: options.model,
+        model,
         messages: [...messages],
-        provider: options.provider,
+        provider,
         tools: options.tools,
         toolChoice: options.toolChoice,
         responseFormat: options.responseFormat,
@@ -234,6 +242,7 @@ export function stream(options: StreamOptions): StreamResult {
         maxTokens: options.maxTokens,
         stopSequences: options.stopSequences,
         reasoningEffort: options.reasoningEffort,
+        metadata: options.metadata,
         providerOptions: options.providerOptions,
         timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout, remainingMs) : undefined,
         abortSignal: options.abortSignal,
@@ -279,6 +288,9 @@ export function stream(options: StreamOptions): StreamResult {
             }
           }
         } catch (error) {
+          if (error instanceof AbortError) {
+            throw error;
+          }
           const streamError = error instanceof SDKError
             ? error
             : new StreamError(
@@ -473,5 +485,5 @@ export function stream(options: StreamOptions): StreamResult {
     }
   };
 
-  return new StreamResultImpl(generatorFn, options.provider ?? "", totalUsageRef);
+  return new StreamResultImpl(generatorFn, provider, totalUsageRef);
 }

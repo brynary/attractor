@@ -1,5 +1,5 @@
 import type { Request } from "../../types/request.js";
-import type { ContentPart } from "../../types/content-part.js";
+import type { ExtendedContentPart } from "../../types/content-part.js";
 import type { ToolDefinition, ToolChoice } from "../../types/tool.js";
 import type { Message } from "../../types/message.js";
 import type { Warning } from "../../types/response.js";
@@ -18,7 +18,7 @@ interface TranslatePartResult {
 }
 
 function translateContentPart(
-  part: ContentPart,
+  part: ExtendedContentPart,
 ): TranslatePartResult {
   switch (part.kind) {
     case "text":
@@ -242,6 +242,10 @@ export function translateRequest(request: Request): TranslatedRequest {
 
   if (request.stopSequences !== undefined && request.stopSequences.length > 0) {
     body.stop_sequences = request.stopSequences;
+  }
+
+  if (request.metadata && Object.keys(request.metadata).length > 0) {
+    body.metadata = request.metadata;
   }
 
   if (request.tools && request.tools.length > 0) {

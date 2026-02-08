@@ -83,11 +83,11 @@ export async function* translateStream(
           currentSignature = typeof contentBlock["signature"] === "string"
             ? contentBlock["signature"]
             : undefined;
-          yield { type: StreamEventType.REASONING_START };
+          yield { type: StreamEventType.REASONING_START, reasoningId: blockIndex };
         } else if (blockType === "redacted_thinking") {
           currentBlockType = "redacted_thinking";
           currentBlockIndex = blockIndex;
-          yield { type: StreamEventType.REASONING_START };
+          yield { type: StreamEventType.REASONING_START, reasoningId: blockIndex };
           const redactedData = typeof contentBlock["data"] === "string"
             ? contentBlock["data"]
             : "";
@@ -95,6 +95,7 @@ export async function* translateStream(
             yield {
               type: StreamEventType.REASONING_DELTA,
               reasoningDelta: redactedData,
+              reasoningId: blockIndex,
               redacted: true,
             };
           }
@@ -125,6 +126,7 @@ export async function* translateStream(
             yield {
               type: StreamEventType.REASONING_DELTA,
               reasoningDelta: thinkingText,
+              reasoningId: currentBlockIndex,
               redacted: true,
             };
           } else {
@@ -132,6 +134,7 @@ export async function* translateStream(
             yield {
               type: StreamEventType.REASONING_DELTA,
               reasoningDelta: thinkingText,
+              reasoningId: currentBlockIndex,
             };
           }
         }
@@ -147,7 +150,11 @@ export async function* translateStream(
             toolCallId: currentToolCallId,
           };
         } else if (currentBlockType === "thinking" || currentBlockType === "redacted_thinking") {
-          yield { type: StreamEventType.REASONING_END, signature: currentSignature };
+          yield {
+            type: StreamEventType.REASONING_END,
+            reasoningId: currentBlockIndex,
+            signature: currentSignature,
+          };
           currentSignature = undefined;
         }
         currentBlockType = undefined;

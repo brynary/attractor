@@ -50,12 +50,14 @@ export interface TextEndEvent {
 
 export interface ReasoningStartEvent {
   type: typeof StreamEventType.REASONING_START;
+  reasoningId?: string;
   raw?: unknown;
 }
 
 export interface ReasoningDeltaEvent {
   type: typeof StreamEventType.REASONING_DELTA;
   reasoningDelta: string;
+  reasoningId?: string;
   /** True when the delta comes from a redacted reasoning block. */
   redacted?: boolean;
   raw?: unknown;
@@ -63,6 +65,7 @@ export interface ReasoningDeltaEvent {
 
 export interface ReasoningEndEvent {
   type: typeof StreamEventType.REASONING_END;
+  reasoningId?: string;
   signature?: string;
   raw?: unknown;
 }

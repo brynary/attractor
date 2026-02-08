@@ -9,6 +9,8 @@ import {
   buildMiddlewareChain,
   buildStreamMiddlewareChain,
 } from "./middleware.js";
+import { StreamAccumulator } from "../utils/stream-accumulator.js";
+import { StreamEventType } from "../types/stream-event.js";
 import { AnthropicAdapter } from "../providers/anthropic/index.js";
 import { OpenAIAdapter } from "../providers/openai/index.js";
 import { OpenAICompatibleAdapter } from "../providers/openai-compatible/index.js";
@@ -81,7 +83,18 @@ export class Client {
       this.middleware,
       baseHandler,
     );
-    yield* chain(resolved);
+    const accumulator = new StreamAccumulator(adapter.name);
+    for await (const event of chain(resolved)) {
+      accumulator.process(event);
+      if (event.type === StreamEventType.FINISH) {
+        yield {
+          ...event,
+          response: event.response ?? accumulator.response(),
+        };
+      } else {
+        yield event;
+      }
+    }
   }
 
   registerProvider(name: string, adapter: ProviderAdapter): void {

@@ -1,11 +1,11 @@
 import type { Role } from "./role.js";
 import { Role as RoleEnum } from "./role.js";
-import type { ContentPart } from "./content-part.js";
+import type { ExtendedContentPart } from "./content-part.js";
 import { isTextPart } from "./content-part.js";
 
 export interface Message {
   role: Role;
-  content: ContentPart[];
+  content: ExtendedContentPart[];
   name?: string;
   toolCallId?: string;
 }

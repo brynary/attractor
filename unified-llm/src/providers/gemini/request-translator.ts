@@ -1,5 +1,5 @@
 import type { Request } from "../../types/request.js";
-import type { ContentPart } from "../../types/content-part.js";
+import type { ExtendedContentPart } from "../../types/content-part.js";
 import type { ToolDefinition, ToolChoice } from "../../types/tool.js";
 import type { Message } from "../../types/message.js";
 import type { Warning } from "../../types/response.js";
@@ -13,7 +13,7 @@ interface TranslatedRequest {
 }
 
 function translateContentPart(
-  part: ContentPart,
+  part: ExtendedContentPart,
   toolCallIdMap: Map<string, string>,
 ): Record<string, unknown> | undefined {
   switch (part.kind) {
