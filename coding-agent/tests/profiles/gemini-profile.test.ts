@@ -51,7 +51,7 @@ describe("createGeminiProfile", () => {
     expect(names).toContain("read_many_files");
   });
 
-  test("providerOptions returns gemini safety settings", () => {
+  test("providerOptions returns gemini safety settings and grounding", () => {
     const opts = profile.providerOptions();
     expect(opts).not.toBeNull();
     const gemini = opts?.gemini;
@@ -60,6 +60,9 @@ describe("createGeminiProfile", () => {
     expect(settings).toHaveLength(1);
     expect(settings[0]?.category).toBe("HARM_CATEGORY_DANGEROUS_CONTENT");
     expect(settings[0]?.threshold).toBe("BLOCK_NONE");
+    const grounding = gemini?.grounding as Record<string, unknown>;
+    expect(grounding).toBeDefined();
+    expect(grounding.google_search).toBe(true);
   });
 
   test("has correct capability flags", () => {

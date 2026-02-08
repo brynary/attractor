@@ -95,6 +95,9 @@ export function createGeminiProfile(
               threshold: "BLOCK_NONE",
             },
           ],
+          grounding: {
+            google_search: true,
+          },
         },
       };
     },

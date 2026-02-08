@@ -38,7 +38,7 @@ async function collectEvents(
   const collector = (async () => {
     for await (const event of gen) {
       events.push(event);
-      if (event.kind === EventKind.SESSION_END) break;
+      if (event.kind === EventKind.INPUT_COMPLETE) break;
     }
   })();
   return Object.assign(events, { done: collector });
@@ -79,7 +79,7 @@ describe("Anthropic real API", () => {
       const eventCollector = (async () => {
         for await (const event of gen) {
           events.push(event);
-          if (event.kind === EventKind.SESSION_END) break;
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
         }
       })();
 
@@ -103,7 +103,7 @@ describe("Anthropic real API", () => {
       expect(eventKinds).toContain(EventKind.TOOL_CALL_START);
       expect(eventKinds).toContain(EventKind.TOOL_CALL_END);
       expect(eventKinds).toContain(EventKind.ASSISTANT_TEXT_END);
-      expect(eventKinds).toContain(EventKind.SESSION_END);
+      expect(eventKinds).toContain(EventKind.INPUT_COMPLETE);
 
       // Should have at least one tool call (write_file)
       const toolStarts = events.filter(
@@ -152,7 +152,7 @@ describe("Anthropic real API", () => {
       const eventCollector = (async () => {
         for await (const event of gen) {
           events.push(event);
-          if (event.kind === EventKind.SESSION_END) break;
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
         }
       })();
 
@@ -200,7 +200,7 @@ describe("Anthropic real API", () => {
       const eventCollector = (async () => {
         for await (const event of gen) {
           events.push(event);
-          if (event.kind === EventKind.SESSION_END) break;
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
         }
       })();
 
@@ -262,7 +262,7 @@ describe("OpenAI real API", () => {
       const eventCollector = (async () => {
         for await (const event of gen) {
           events.push(event);
-          if (event.kind === EventKind.SESSION_END) break;
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
         }
       })();
 
@@ -313,7 +313,7 @@ describe("OpenAI real API", () => {
       const eventCollector = (async () => {
         for await (const event of gen) {
           events.push(event);
-          if (event.kind === EventKind.SESSION_END) break;
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
         }
       })();
 
@@ -375,7 +375,7 @@ describe("OpenAI real API", () => {
       const eventCollector = (async () => {
         for await (const event of gen) {
           events.push(event);
-          if (event.kind === EventKind.SESSION_END) break;
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
         }
       })();
 

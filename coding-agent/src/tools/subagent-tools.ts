@@ -96,7 +96,7 @@ export function createSendInputTool(
 
       const agent = agents.get(agentId);
       if (!agent) {
-        throw new Error(`Unknown agent: ${agentId}`);
+        return `Error: Unknown agent: ${agentId}`;
       }
 
       await agent.submit(message);
@@ -125,7 +125,7 @@ export function createWaitTool(
 
       const agent = agents.get(agentId);
       if (!agent) {
-        throw new Error(`Unknown agent: ${agentId}`);
+        return `Error: Unknown agent: ${agentId}`;
       }
 
       const result = await agent.waitForCompletion();
@@ -154,7 +154,7 @@ export function createCloseAgentTool(
 
       const agent = agents.get(agentId);
       if (!agent) {
-        throw new Error(`Unknown agent: ${agentId}`);
+        return `Error: Unknown agent: ${agentId}`;
       }
 
       await agent.close();

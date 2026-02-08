@@ -100,7 +100,7 @@ describe("integration smoke test", () => {
     const eventCollector = (async () => {
       for await (const event of eventGen) {
         allEvents.push(event);
-        if (event.kind === EventKind.SESSION_END) break;
+        if (event.kind === EventKind.INPUT_COMPLETE) break;
       }
     })();
 
@@ -139,7 +139,7 @@ describe("integration smoke test", () => {
     expect(eventKinds).toContain(EventKind.TOOL_CALL_START);
     expect(eventKinds).toContain(EventKind.TOOL_CALL_END);
     expect(eventKinds).toContain(EventKind.ASSISTANT_TEXT_END);
-    expect(eventKinds).toContain(EventKind.SESSION_END);
+    expect(eventKinds).toContain(EventKind.INPUT_COMPLETE);
 
     // Verify 3 LLM calls were made
     expect(adapter.calls).toHaveLength(3);

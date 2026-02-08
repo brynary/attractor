@@ -25,8 +25,11 @@ export interface SessionConfig {
   enableLoopDetection: boolean;
   loopDetectionWindow: number;
   maxSubagentDepth: number;
+  /** Spec extension: pre/post hooks for tool call interception (e.g., approval gates). */
   toolCallInterceptor?: ToolCallInterceptor;
+  /** Spec extension: user instruction override appended last in system prompt (highest priority). */
   userInstructions?: string;
+  /** Spec extension: enables streaming via Client.stream() instead of Client.complete(). */
   enableStreaming: boolean;
 }
 

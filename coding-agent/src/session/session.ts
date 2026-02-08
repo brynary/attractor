@@ -312,8 +312,8 @@ export class Session {
     // 9. Set state
     this.state = SessionState.IDLE;
 
-    // 10. Emit SESSION_END
-    this.emit(EventKind.SESSION_END);
+    // 10. Emit INPUT_COMPLETE
+    this.emit(EventKind.INPUT_COMPLETE);
   }
 
   private async executeToolCalls(
@@ -404,6 +404,12 @@ export class Session {
 
       // b. Execute
       const rawOutput = await tool.executor(args, this.executionEnv, toolAbortController.signal);
+
+      // b2. Emit output delta
+      this.emit(EventKind.TOOL_CALL_OUTPUT_DELTA, {
+        call_id: toolCall.id,
+        delta: rawOutput,
+      });
 
       // c. Post-hook interceptor
       if (interceptor?.post) {

@@ -424,7 +424,7 @@ describe("Session", () => {
   test("events are emitted for key lifecycle moments", async () => {
     const { session } = createTestSession([makeTextResponse("hi")]);
 
-    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
     await session.submit("test");
 
     const events = await eventsPromise;
@@ -434,7 +434,7 @@ describe("Session", () => {
     // so the consumer may miss it. Verify the other lifecycle events.
     expect(kinds).toContain(EventKind.USER_INPUT);
     expect(kinds).toContain(EventKind.ASSISTANT_TEXT_END);
-    expect(kinds).toContain(EventKind.SESSION_END);
+    expect(kinds).toContain(EventKind.INPUT_COMPLETE);
   });
 
   test("events include tool call events", async () => {
@@ -453,14 +453,21 @@ describe("Session", () => {
       { files },
     );
 
-    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
     await session.submit("read file");
 
     const events = await eventsPromise;
     const kinds = events.map((e) => e.kind);
 
     expect(kinds).toContain(EventKind.TOOL_CALL_START);
+    expect(kinds).toContain(EventKind.TOOL_CALL_OUTPUT_DELTA);
     expect(kinds).toContain(EventKind.TOOL_CALL_END);
+
+    const outputDelta = events.find(
+      (e) => e.kind === EventKind.TOOL_CALL_OUTPUT_DELTA,
+    );
+    expect(outputDelta?.data["call_id"]).toBe("tc1");
+    expect(typeof outputDelta?.data["delta"]).toBe("string");
   });
 
   test("session id is a uuid", () => {
@@ -652,7 +659,7 @@ describe("Session", () => {
       [makeTextResponse(largeContent)],
     );
 
-    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
     await session.submit("generate big response");
 
     const events = await eventsPromise;
@@ -687,7 +694,7 @@ describe("Session", () => {
       config: { enableStreaming: true },
     });
 
-    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
     await session.submit("Hi");
 
     const events = await eventsPromise;
@@ -783,7 +790,7 @@ describe("Session", () => {
       config: { enableStreaming: false },
     });
 
-    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
     await session.submit("Hi");
 
     const events = await eventsPromise;

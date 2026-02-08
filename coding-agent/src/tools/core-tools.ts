@@ -1,5 +1,6 @@
 import type { RegisteredTool } from "../types/index.js";
 import type { ExecutionEnvironment } from "../types/index.js";
+import { normalizeWhitespace } from "./apply-patch.js";
 
 const IMAGE_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico",
@@ -155,26 +156,44 @@ export function createEditFileTool(): RegisteredTool {
       const numbered = await env.readFile(filePath);
       const rawContent = stripLineNumbers(numbered);
 
-      if (!rawContent.includes(oldString)) {
+      if (rawContent.includes(oldString)) {
+        const occurrences = rawContent.split(oldString).length - 1;
+
+        if (!replaceAll && occurrences > 1) {
+          throw new Error(
+            `old_string is not unique in ${filePath}. Provide more context or use replace_all.`,
+          );
+        }
+
+        const newContent = replaceAll
+          ? rawContent.replaceAll(oldString, newString)
+          : rawContent.replace(oldString, newString);
+
+        await env.writeFile(filePath, newContent);
+
+        const replaced = replaceAll ? occurrences : 1;
+        return `Replaced ${replaced} occurrence(s) in ${filePath}`;
+      }
+
+      // Fuzzy match fallback: normalize whitespace and retry
+      const normalizedContent = rawContent.split("\n").map(normalizeWhitespace).join("\n");
+      const normalizedOld = oldString.split("\n").map(normalizeWhitespace).join("\n");
+
+      if (!normalizedContent.includes(normalizedOld)) {
         throw new Error(`old_string not found in ${filePath}`);
       }
 
-      const occurrences = rawContent.split(oldString).length - 1;
+      const normalizedPos = normalizedContent.indexOf(normalizedOld);
+      const normalizedLines = normalizedContent.slice(0, normalizedPos).split("\n");
+      const startLine = normalizedLines.length - 1;
+      const oldLines = normalizedOld.split("\n");
+      const endLine = startLine + oldLines.length;
+      const originalLines = rawContent.split("\n");
+      const matchedOriginal = originalLines.slice(startLine, endLine).join("\n");
 
-      if (!replaceAll && occurrences > 1) {
-        throw new Error(
-          `old_string is not unique in ${filePath}. Provide more context or use replace_all.`,
-        );
-      }
-
-      const newContent = replaceAll
-        ? rawContent.replaceAll(oldString, newString)
-        : rawContent.replace(oldString, newString);
-
+      const newContent = rawContent.replace(matchedOriginal, newString);
       await env.writeFile(filePath, newContent);
-
-      const replaced = replaceAll ? occurrences : 1;
-      return `Replaced ${replaced} occurrence(s) in ${filePath}`;
+      return `Replaced 1 occurrence in ${filePath} (fuzzy match)`;
     },
   };
 }

@@ -232,6 +232,43 @@ describe("edit_file", () => {
     expect(content).not.toContain("foo");
     expect(content).toContain("baz");
   });
+
+  test("falls back to fuzzy matching when whitespace differs", async () => {
+    const env = new StubExecutionEnvironment({
+      files: new Map([["/test/file.ts", "const  x  =  1;\nconst y = 2;"]]),
+    });
+    const tool = createEditFileTool();
+    const result = await tool.executor(
+      {
+        file_path: "/test/file.ts",
+        old_string: "const x = 1;",
+        new_string: "const x = 42;",
+      },
+      env,
+    );
+    expect(result).toContain("fuzzy match");
+
+    const content = await env.readFile("/test/file.ts");
+    expect(content).toContain("const x = 42;");
+    expect(content).toContain("const y = 2;");
+  });
+
+  test("fuzzy match throws when neither exact nor normalized match found", async () => {
+    const env = new StubExecutionEnvironment({
+      files: new Map([["/test/file.ts", "const x = 1;"]]),
+    });
+    const tool = createEditFileTool();
+    await expect(
+      tool.executor(
+        {
+          file_path: "/test/file.ts",
+          old_string: "totally different",
+          new_string: "replacement",
+        },
+        env,
+      ),
+    ).rejects.toThrow("old_string not found");
+  });
 });
 
 describe("shell", () => {

@@ -99,7 +99,7 @@ export class SessionBackend implements CodergenBackend {
             assistantText = text;
           }
         }
-        if (event.kind === EventKind.SESSION_END) break;
+        if (event.kind === EventKind.INPUT_COMPLETE) break;
       }
     })();
 
@@ -138,7 +138,7 @@ export class SessionBackend implements CodergenBackend {
             assistantText = text;
           }
         }
-        if (event.kind === EventKind.SESSION_END) break;
+        if (event.kind === EventKind.INPUT_COMPLETE) break;
       }
     })();
 

@@ -133,14 +133,16 @@ describe("send_input", () => {
     expect(result).toContain("Sent message to agent agent-1");
   });
 
-  test("throws for unknown agent", async () => {
+  test("returns error string for unknown agent", async () => {
     const agents = new Map<string, SubAgentHandle>();
     const env = new StubExecutionEnvironment();
     const tool = createSendInputTool(agents);
 
-    await expect(
-      tool.executor({ agent_id: "no-such-agent", message: "hello" }, env),
-    ).rejects.toThrow("Unknown agent: no-such-agent");
+    const result = await tool.executor(
+      { agent_id: "no-such-agent", message: "hello" },
+      env,
+    );
+    expect(result).toBe("Error: Unknown agent: no-such-agent");
   });
 });
 
@@ -158,6 +160,15 @@ describe("wait", () => {
     expect(result).toContain("turns: 5");
     expect(result).toContain("Task completed successfully");
   });
+
+  test("returns error string for unknown agent", async () => {
+    const agents = new Map<string, SubAgentHandle>();
+    const env = new StubExecutionEnvironment();
+    const tool = createWaitTool(agents);
+
+    const result = await tool.executor({ agent_id: "no-such-agent" }, env);
+    expect(result).toBe("Error: Unknown agent: no-such-agent");
+  });
 });
 
 describe("close_agent", () => {
@@ -171,5 +182,14 @@ describe("close_agent", () => {
     const result = await tool.executor({ agent_id: "agent-1" }, env);
     expect(result).toContain("Closed agent agent-1");
     expect(agents.has("agent-1")).toBe(false);
+  });
+
+  test("returns error string for unknown agent", async () => {
+    const agents = new Map<string, SubAgentHandle>();
+    const env = new StubExecutionEnvironment();
+    const tool = createCloseAgentTool(agents);
+
+    const result = await tool.executor({ agent_id: "no-such-agent" }, env);
+    expect(result).toBe("Error: Unknown agent: no-such-agent");
   });
 });
