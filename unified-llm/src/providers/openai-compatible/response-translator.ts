@@ -56,6 +56,10 @@ export function translateResponse(
   const inputTokens = usageData ? num(usageData["prompt_tokens"]) : 0;
   const outputTokens = usageData ? num(usageData["completion_tokens"]) : 0;
 
+  // Note: reasoning_tokens and cached_tokens are Responses API features.
+  // Most OpenAI-compatible services (vLLM, Ollama, Together AI, Groq) do NOT provide these.
+  // The code below attempts extraction for compatibility with services that do support them,
+  // but these fields will typically be undefined for third-party services.
   const completionDetails = rec(usageData?.["completion_tokens_details"]);
   const reasoningTokens = completionDetails && typeof completionDetails["reasoning_tokens"] === "number"
     ? completionDetails["reasoning_tokens"]

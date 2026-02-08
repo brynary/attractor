@@ -358,4 +358,282 @@ describe("Client", () => {
       streamRead: 20000,
     });
   });
+
+  test("streaming middleware chain executes in correct order", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hello" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+
+    const log: string[] = [];
+
+    const mw1: Middleware = {
+      stream: async function* (req, next) {
+        log.push("mw1-req");
+        for await (const event of next(req)) {
+          log.push("mw1-event");
+          yield event;
+        }
+        log.push("mw1-done");
+      },
+    };
+
+    const mw2: Middleware = {
+      stream: async function* (req, next) {
+        log.push("mw2-req");
+        for await (const event of next(req)) {
+          log.push("mw2-event");
+          yield event;
+        }
+        log.push("mw2-done");
+      },
+    };
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+      middleware: [mw1, mw2],
+    });
+
+    const events = [];
+    for await (const event of client.stream(makeRequest())) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(log).toEqual([
+      "mw1-req",
+      "mw2-req",
+      "mw2-event",
+      "mw1-event",
+      "mw2-event",
+      "mw1-event",
+      "mw2-event",
+      "mw1-event",
+      "mw2-done",
+      "mw1-done",
+    ]);
+  });
+
+  test("streaming middleware can modify request", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "modified-model" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hi" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+
+    const mw: Middleware = {
+      stream: async function* (req, next) {
+        const modifiedReq = { ...req, model: "modified-model" };
+        yield* next(modifiedReq);
+      },
+    };
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+      middleware: [mw],
+    });
+
+    const events = [];
+    for await (const event of client.stream(makeRequest("original-model"))) {
+      events.push(event);
+    }
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.model).toBe("modified-model");
+    expect(events[0]).toMatchObject({
+      type: StreamEventType.STREAM_START,
+      model: "modified-model",
+    });
+  });
+
+  test("streaming middleware can modify events", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hello" },
+          { type: StreamEventType.TEXT_DELTA, delta: " world" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+
+    const mw: Middleware = {
+      stream: async function* (req, next) {
+        for await (const event of next(req)) {
+          if (event.type === StreamEventType.TEXT_DELTA) {
+            yield { ...event, delta: event.delta.toUpperCase() };
+          } else {
+            yield event;
+          }
+        }
+      },
+    };
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+      middleware: [mw],
+    });
+
+    const events = [];
+    for await (const event of client.stream(makeRequest())) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(4);
+    expect(events[1]).toEqual({
+      type: StreamEventType.TEXT_DELTA,
+      delta: "HELLO",
+    });
+    expect(events[2]).toEqual({
+      type: StreamEventType.TEXT_DELTA,
+      delta: " WORLD",
+    });
+  });
+
+  test("multiple streaming middleware work together", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.TEXT_DELTA, delta: "a" },
+          { type: StreamEventType.TEXT_DELTA, delta: "b" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+
+    const prefixMw: Middleware = {
+      stream: async function* (req, next) {
+        for await (const event of next(req)) {
+          if (event.type === StreamEventType.TEXT_DELTA) {
+            yield { ...event, delta: `[${event.delta}` };
+          } else {
+            yield event;
+          }
+        }
+      },
+    };
+
+    const suffixMw: Middleware = {
+      stream: async function* (req, next) {
+        for await (const event of next(req)) {
+          if (event.type === StreamEventType.TEXT_DELTA) {
+            yield { ...event, delta: `${event.delta}]` };
+          } else {
+            yield event;
+          }
+        }
+      },
+    };
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+      middleware: [prefixMw, suffixMw],
+    });
+
+    const events = [];
+    for await (const event of client.stream(makeRequest())) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(4);
+    expect(events[1]).toEqual({
+      type: StreamEventType.TEXT_DELTA,
+      delta: "[a]",
+    });
+    expect(events[2]).toEqual({
+      type: StreamEventType.TEXT_DELTA,
+      delta: "[b]",
+    });
+  });
+
+  test("streaming middleware error handling", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hello" },
+        ],
+      },
+    ]);
+
+    const errorMw: Middleware = {
+      stream: async function* (req, next) {
+        for await (const event of next(req)) {
+          yield event;
+          if (event.type === StreamEventType.TEXT_DELTA) {
+            throw new Error("Middleware error");
+          }
+        }
+      },
+    };
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+      middleware: [errorMw],
+    });
+
+    const events = [];
+    let error: Error | undefined;
+    try {
+      for await (const event of client.stream(makeRequest())) {
+        events.push(event);
+      }
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).toBeDefined();
+    expect(error?.message).toBe("Middleware error");
+    expect(events).toHaveLength(2);
+    expect(events[0]?.type).toBe(StreamEventType.STREAM_START);
+    expect(events[1]?.type).toBe(StreamEventType.TEXT_DELTA);
+  });
+
+  test("streaming middleware without stream method falls back gracefully", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hi" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+
+    const completeMw: Middleware = {
+      complete: async (req, next) => {
+        return next(req);
+      },
+    };
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+      middleware: [completeMw],
+    });
+
+    const events = [];
+    for await (const event of client.stream(makeRequest())) {
+      events.push(event);
+    }
+
+    expect(events).toHaveLength(3);
+    expect(events[0]?.type).toBe(StreamEventType.STREAM_START);
+  });
 });

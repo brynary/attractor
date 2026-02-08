@@ -8,8 +8,8 @@
     "supportsTools": true,
     "supportsVision": true,
     "supportsReasoning": true,
-    "inputCostPerMillion": 15,
-    "outputCostPerMillion": 75,
+    "inputCostPerMillion": 5,
+    "outputCostPerMillion": 25,
     "aliases": ["claude-opus", "opus"]
   },
   {
@@ -26,6 +26,19 @@
     "aliases": ["claude-sonnet", "sonnet"]
   },
   {
+    "id": "claude-haiku-4-5",
+    "provider": "anthropic",
+    "displayName": "Claude Haiku 4.5",
+    "contextWindow": 200000,
+    "maxOutput": 8000,
+    "supportsTools": true,
+    "supportsVision": true,
+    "supportsReasoning": false,
+    "inputCostPerMillion": 1,
+    "outputCostPerMillion": 5,
+    "aliases": ["claude-haiku", "haiku"]
+  },
+  {
     "id": "gpt-5.2",
     "provider": "openai",
     "displayName": "GPT-5.2",
@@ -34,8 +47,8 @@
     "supportsTools": true,
     "supportsVision": true,
     "supportsReasoning": true,
-    "inputCostPerMillion": 10,
-    "outputCostPerMillion": 30,
+    "inputCostPerMillion": 1.75,
+    "outputCostPerMillion": 14,
     "aliases": ["gpt-5.2"]
   },
   {
@@ -47,8 +60,8 @@
     "supportsTools": true,
     "supportsVision": true,
     "supportsReasoning": true,
-    "inputCostPerMillion": 1.5,
-    "outputCostPerMillion": 6,
+    "inputCostPerMillion": 0.875,
+    "outputCostPerMillion": 3.5,
     "aliases": ["gpt-5.2-mini", "gpt-mini"]
   },
   {
@@ -60,8 +73,8 @@
     "supportsTools": true,
     "supportsVision": true,
     "supportsReasoning": true,
-    "inputCostPerMillion": 10,
-    "outputCostPerMillion": 30,
+    "inputCostPerMillion": 1.75,
+    "outputCostPerMillion": 14,
     "aliases": ["gpt-codex", "codex"]
   },
   {
@@ -73,8 +86,8 @@
     "supportsTools": true,
     "supportsVision": true,
     "supportsReasoning": true,
-    "inputCostPerMillion": 1.25,
-    "outputCostPerMillion": 10,
+    "inputCostPerMillion": 2,
+    "outputCostPerMillion": 12,
     "aliases": ["gemini-pro", "gemini-3-pro"]
   },
   {
@@ -86,8 +99,8 @@
     "supportsTools": true,
     "supportsVision": true,
     "supportsReasoning": true,
-    "inputCostPerMillion": 0.3,
-    "outputCostPerMillion": 2.5,
+    "inputCostPerMillion": 0.5,
+    "outputCostPerMillion": 3,
     "aliases": ["gemini-flash", "gemini-3-flash"]
   }
 ]

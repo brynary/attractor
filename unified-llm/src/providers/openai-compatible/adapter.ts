@@ -26,6 +26,20 @@ import { translateResponse } from "./response-translator.js";
 import { translateStream } from "./stream-translator.js";
 import { resolveFileImages } from "../../utils/resolve-file-images.js";
 
+/**
+ * OpenAI-Compatible Adapter for third-party services (vLLM, Ollama, Together AI, Groq, etc.)
+ *
+ * This adapter uses the OpenAI Chat Completions API (`/v1/chat/completions`) rather than
+ * the Responses API. Third-party services typically implement only the Chat Completions protocol.
+ *
+ * **Limitations**:
+ * - Does NOT support reasoning tokens (Responses API feature)
+ * - Does NOT support built-in tools beyond basic function calling
+ * - Does NOT support other Responses API features (thinking blocks, redacted content)
+ * - Cache token reporting depends on service implementation (not guaranteed)
+ *
+ * For official OpenAI models, use the `OpenAIAdapter` which uses the Responses API.
+ */
 export interface OpenAICompatibleAdapterOptions {
   baseUrl: string;
   apiKey?: string;

@@ -226,7 +226,11 @@ describe("OpenAI-Compatible Response Translator", () => {
     });
   });
 
-  test("translates usage with reasoning and cache tokens", () => {
+  test("translates usage with reasoning and cache tokens (when provided)", () => {
+    // Note: Most OpenAI-compatible services (vLLM, Ollama, Together AI, Groq) do NOT
+    // provide reasoning_tokens or cached_tokens as these are Responses API features.
+    // This test verifies that IF a service provides these fields, they are extracted.
+    // In practice, these fields will typically be undefined for third-party services.
     const body = {
       id: "chatcmpl-006",
       model: "o3",

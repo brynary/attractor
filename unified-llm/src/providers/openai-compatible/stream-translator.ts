@@ -37,6 +37,10 @@ function translateUsage(
     raw: usageData,
   };
 
+  // Note: reasoning_tokens and cached_tokens are Responses API features.
+  // Most OpenAI-compatible services (vLLM, Ollama, Together AI, Groq) do NOT provide these.
+  // The code below attempts extraction for compatibility with services that do support them,
+  // but these fields will typically be undefined for third-party services.
   const completionDetails = rec(usageData["completion_tokens_details"]);
   if (
     completionDetails &&

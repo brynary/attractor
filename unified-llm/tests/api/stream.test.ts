@@ -532,4 +532,322 @@ describe("stream", () => {
     expect(adapter.calls[0]?.timeout).toBeDefined();
     expect(adapter.calls[0]?.timeout?.request).toBe(20000);
   });
+
+  test("passive tools break streaming tool loop", async () => {
+    const toolCallEvents: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "passive_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: '{"q":"test"}',
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const adapter = new StubAdapter("stub", [{ events: toolCallEvents }]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "use passive tool",
+      tools: [
+        {
+          name: "passive_tool",
+          description: "Passive",
+          parameters: {},
+          // No execute handler
+        },
+      ],
+      maxToolRounds: 3,
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    // Should only make one LLM call, loop breaks on passive tool
+    expect(adapter.calls).toHaveLength(1);
+    expect(collected.filter((e) => e.type === StreamEventType.TOOL_CALL_START)).toHaveLength(1);
+  });
+
+  test("STEP_FINISH event emitted after tool execution", async () => {
+    const toolCallEvents: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "my_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const finalEvents = makeStreamEvents("Done");
+
+    const adapter = new StubAdapter("stub", [
+      { events: toolCallEvents },
+      { events: finalEvents },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "use tool",
+      tools: [
+        {
+          name: "my_tool",
+          description: "A tool",
+          parameters: {},
+          execute: async () => "result",
+        },
+      ],
+      maxToolRounds: 2,
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    // Should have a STEP_FINISH event after tool execution
+    const stepFinishEvents = collected.filter((e) => e.type === StreamEventType.STEP_FINISH);
+    expect(stepFinishEvents).toHaveLength(1);
+
+    // STEP_FINISH should come before the second STREAM_START
+    const stepFinishIndex = collected.findIndex((e) => e.type === StreamEventType.STEP_FINISH);
+    const secondStreamStart = collected.findIndex(
+      (e, i) => i > 0 && e.type === StreamEventType.STREAM_START,
+    );
+    expect(stepFinishIndex).toBeGreaterThan(-1);
+    expect(secondStreamStart).toBeGreaterThan(stepFinishIndex);
+  });
+
+  test("unknown tools receive error results in streaming", async () => {
+    const toolCallEvents: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "known_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-2",
+        toolName: "unknown_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-2",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-2",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const finalEvents = makeStreamEvents("Handled");
+
+    const adapter = new StubAdapter("stub", [
+      { events: toolCallEvents },
+      { events: finalEvents },
+    ]);
+    const client = makeClient(adapter);
+
+    let knownToolCalled = false;
+    const result = stream({
+      model: "test-model",
+      prompt: "use tools",
+      tools: [
+        {
+          name: "known_tool",
+          description: "Known",
+          parameters: {},
+          execute: async () => {
+            knownToolCalled = true;
+            return "ok";
+          },
+        },
+      ],
+      maxToolRounds: 2,
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    // Known tool should be executed
+    expect(knownToolCalled).toBe(true);
+
+    // Should complete the loop (unknown tool gets error, model responds)
+    expect(adapter.calls).toHaveLength(2);
+  });
+
+  test("multi-round streaming completes successfully", async () => {
+    const round1Events: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const round2Events: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      { type: StreamEventType.TEXT_START },
+      { type: StreamEventType.TEXT_DELTA, delta: "Done" },
+      { type: StreamEventType.TEXT_END },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "stop" },
+        usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+      },
+    ];
+
+    const adapter = new StubAdapter("stub", [
+      { events: round1Events },
+      { events: round2Events },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "use tool",
+      tools: [
+        {
+          name: "tool",
+          description: "A tool",
+          parameters: {},
+          execute: async () => "ok",
+        },
+      ],
+      maxToolRounds: 2,
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    // Should have events from both rounds
+    expect(adapter.calls).toHaveLength(2);
+    const streamStarts = collected.filter((e) => e.type === StreamEventType.STREAM_START);
+    expect(streamStarts).toHaveLength(2);
+
+    const response = await result.response();
+    expect(response.finishReason.reason).toBe("stop");
+  });
+
+  test("streaming with tool returning structured data", async () => {
+    const toolCallEvents: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "data_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const finalEvents = makeStreamEvents("Got data");
+
+    const adapter = new StubAdapter("stub", [
+      { events: toolCallEvents },
+      { events: finalEvents },
+    ]);
+    const client = makeClient(adapter);
+
+    let receivedData: unknown;
+    const result = stream({
+      model: "test-model",
+      prompt: "get data",
+      tools: [
+        {
+          name: "data_tool",
+          description: "Returns object",
+          parameters: {},
+          execute: async () => {
+            const data = { items: ["a", "b"], count: 2 };
+            receivedData = data;
+            return data;
+          },
+        },
+      ],
+      client,
+    });
+
+    for await (const _event of result) {
+      // consume
+    }
+
+    expect(receivedData).toEqual({ items: ["a", "b"], count: 2 });
+  });
 });

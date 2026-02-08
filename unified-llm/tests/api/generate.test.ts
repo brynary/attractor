@@ -769,4 +769,271 @@ describe("generate", () => {
     expect(adapter.calls[0]?.timeout).toBeDefined();
     expect(adapter.calls[0]?.timeout?.request).toBe(20000);
   });
+
+  test("passive tools (no execute handler) break tool loop", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "passive_tool", arguments: { query: "test" } },
+        ]),
+      },
+    ]);
+    setup(adapter);
+
+    const result = await generate({
+      model: "test-model",
+      prompt: "use passive tool",
+      tools: [
+        {
+          name: "passive_tool",
+          description: "A passive tool without execute handler",
+          parameters: { type: "object", properties: { query: { type: "string" } } },
+          // No execute handler - this is passive
+        },
+      ],
+      maxToolRounds: 3,
+      client,
+    });
+
+    // Should only make one LLM call, then stop because passive tools don't auto-execute
+    expect(adapter.calls).toHaveLength(1);
+    expect(result.steps).toHaveLength(1);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.name).toBe("passive_tool");
+    expect(result.toolResults).toHaveLength(0); // No tool results because not executed
+  });
+
+  test("mixed passive and active tools: passive breaks loop", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "active_tool", arguments: {} },
+          { id: "tc-2", name: "passive_tool", arguments: {} },
+        ]),
+      },
+    ]);
+    setup(adapter);
+
+    const result = await generate({
+      model: "test-model",
+      prompt: "use both tools",
+      tools: [
+        {
+          name: "active_tool",
+          description: "Active",
+          parameters: {},
+          execute: async () => "executed",
+        },
+        {
+          name: "passive_tool",
+          description: "Passive",
+          parameters: {},
+          // No execute handler
+        },
+      ],
+      maxToolRounds: 3,
+      client,
+    });
+
+    // Should stop after first response because passive tool is present
+    expect(adapter.calls).toHaveLength(1);
+    expect(result.toolCalls).toHaveLength(2);
+    expect(result.toolResults).toHaveLength(0); // Loop breaks before execution
+  });
+
+  test("unknown tool calls receive error results", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "known_tool", arguments: {} },
+          { id: "tc-2", name: "unknown_tool", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("Handled errors"),
+      },
+    ]);
+    setup(adapter);
+
+    const result = await generate({
+      model: "test-model",
+      prompt: "use tools",
+      tools: [
+        {
+          name: "known_tool",
+          description: "Known",
+          parameters: {},
+          execute: async () => "ok",
+        },
+      ],
+      maxToolRounds: 2,
+      client,
+    });
+
+    expect(result.steps).toHaveLength(2);
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolResults).toHaveLength(2);
+
+    // Known tool should succeed
+    const knownResult = firstStep?.toolResults.find((r) => r.toolCallId === "tc-1");
+    expect(knownResult?.isError).toBe(false);
+    expect(knownResult?.content).toBe("ok");
+
+    // Unknown tool should get error
+    const unknownResult = firstStep?.toolResults.find((r) => r.toolCallId === "tc-2");
+    expect(unknownResult?.isError).toBe(true);
+    expect(unknownResult?.content).toContain("not found");
+  });
+
+  test("tool execute returns object content", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "data_tool", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("Got data"),
+      },
+    ]);
+    setup(adapter);
+
+    const result = await generate({
+      model: "test-model",
+      prompt: "get data",
+      tools: [
+        {
+          name: "data_tool",
+          description: "Returns structured data",
+          parameters: {},
+          execute: async () => ({ name: "Alice", age: 30, active: true }),
+        },
+      ],
+      client,
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolResults[0]?.isError).toBe(false);
+    expect(firstStep?.toolResults[0]?.content).toEqual({ name: "Alice", age: 30, active: true });
+  });
+
+  test("tool execute returns array content", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "list_tool", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("Got list"),
+      },
+    ]);
+    setup(adapter);
+
+    const result = await generate({
+      model: "test-model",
+      prompt: "get list",
+      tools: [
+        {
+          name: "list_tool",
+          description: "Returns array",
+          parameters: {},
+          execute: async () => ["item1", "item2", "item3"],
+        },
+      ],
+      client,
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolResults[0]?.isError).toBe(false);
+    expect(firstStep?.toolResults[0]?.content).toEqual(["item1", "item2", "item3"]);
+  });
+
+  test("tool execute returns number coerced to string", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "num_tool", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("Got number"),
+      },
+    ]);
+    setup(adapter);
+
+    const result = await generate({
+      model: "test-model",
+      prompt: "get number",
+      tools: [
+        {
+          name: "num_tool",
+          description: "Returns number",
+          parameters: {},
+          execute: async () => 42,
+        },
+      ],
+      client,
+    });
+
+    const firstStep = result.steps[0];
+    expect(firstStep?.toolResults[0]?.isError).toBe(false);
+    expect(firstStep?.toolResults[0]?.content).toBe("42");
+  });
+
+  test("three-round tool loop with different tools each round", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "tool_a", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-2", name: "tool_b", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-3", name: "tool_c", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("All done"),
+      },
+    ]);
+    setup(adapter);
+
+    let executionOrder: string[] = [];
+    const result = await generate({
+      model: "test-model",
+      prompt: "do three steps",
+      tools: [
+        {
+          name: "tool_a",
+          description: "A",
+          parameters: {},
+          execute: async () => { executionOrder.push("a"); return "result_a"; },
+        },
+        {
+          name: "tool_b",
+          description: "B",
+          parameters: {},
+          execute: async () => { executionOrder.push("b"); return "result_b"; },
+        },
+        {
+          name: "tool_c",
+          description: "C",
+          parameters: {},
+          execute: async () => { executionOrder.push("c"); return "result_c"; },
+        },
+      ],
+      maxToolRounds: 3,
+      client,
+    });
+
+    expect(result.steps).toHaveLength(4);
+    expect(executionOrder).toEqual(["a", "b", "c"]);
+    expect(result.text).toBe("All done");
+  });
 });

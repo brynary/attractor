@@ -71,12 +71,12 @@ describe("getModelInfo", () => {
 describe("listModels", () => {
   test("lists all models when no provider specified", () => {
     const models = listModels();
-    expect(models.length).toBeGreaterThanOrEqual(7);
+    expect(models.length).toBeGreaterThanOrEqual(8);
   });
 
   test("filters by provider", () => {
     const anthropicModels = listModels("anthropic");
-    expect(anthropicModels).toHaveLength(2);
+    expect(anthropicModels).toHaveLength(3);
     expect(anthropicModels.every((m) => m.provider === "anthropic")).toBe(true);
 
     const openaiModels = listModels("openai");

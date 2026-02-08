@@ -2,8 +2,38 @@ import type { StreamEvent } from "../types/stream-event.js";
 import { StreamEventType } from "../types/stream-event.js";
 import type { Response, Usage, FinishReason, Warning } from "../types/response.js";
 import type { ContentPart, ToolCallData } from "../types/content-part.js";
+import type { ToolCall, ToolResult } from "../types/tool.js";
 import { Role } from "../types/role.js";
 import { rec } from "./extract.js";
+import { responseText, responseToolCalls, responseReasoning } from "../types/response.js";
+
+/**
+ * StepResult captures the results of a single step in a multi-step tool execution loop.
+ * This is an internal representation used by StreamAccumulator that matches the Layer 4 API type.
+ */
+interface StepResult {
+  text: string;
+  reasoning: string | undefined;
+  toolCalls: ToolCall[];
+  toolResults: ToolResult[];
+  finishReason: FinishReason;
+  usage: Usage;
+  response: Response;
+  warnings: Warning[];
+}
+
+/**
+ * Convert ToolCallData to ToolCall by ensuring arguments is an object.
+ */
+function toToolCall(data: ToolCallData): ToolCall {
+  const args = typeof data.arguments === "string" ? {} : data.arguments;
+  return {
+    id: data.id,
+    name: data.name,
+    arguments: args,
+    rawArguments: data.rawArguments,
+  };
+}
 
 interface ToolCallAccumulator {
   id: string;
@@ -29,6 +59,7 @@ export class StreamAccumulator {
     totalTokens: 0,
   };
   private warnings: Warning[] = [];
+  private steps: StepResult[] = [];
 
   constructor(provider = "") {
     this.provider = provider;
@@ -175,5 +206,62 @@ export class StreamAccumulator {
       usage: this.usage,
       warnings: this.warnings,
     };
+  }
+
+  /**
+   * Begin a new step in the multi-step tool execution loop.
+   * Resets the accumulator state for the new step while preserving step history.
+   */
+  beginStep(): void {
+    this.textParts = [];
+    this.currentText = "";
+    this.reasoningParts = [];
+    this.currentReasoning = "";
+    this.reasoningSignature = undefined;
+    this.toolCalls.clear();
+    this.completedToolCalls = [];
+    this.finishReason = { reason: "other" };
+    this.usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    };
+    this.warnings = [];
+  }
+
+  /**
+   * Finalize the current step and add it to the step history.
+   * Captures the current accumulated response as a StepResult.
+   * Tool results should be provided externally (used by Layer 4).
+   */
+  finalizeStep(toolResults: ToolResult[] = []): void {
+    const currentResponse = this.response();
+    const toolCallsData = responseToolCalls(currentResponse);
+    const stepResult: StepResult = {
+      text: responseText(currentResponse),
+      reasoning: responseReasoning(currentResponse),
+      toolCalls: toolCallsData.map(toToolCall),
+      toolResults,
+      finishReason: currentResponse.finishReason,
+      usage: currentResponse.usage,
+      response: currentResponse,
+      warnings: currentResponse.warnings,
+    };
+    this.steps.push(stepResult);
+  }
+
+  /**
+   * Get all accumulated steps.
+   * Returns an array of StepResult objects representing each step in the multi-step loop.
+   */
+  getSteps(): StepResult[] {
+    return this.steps;
+  }
+
+  /**
+   * Get the number of steps accumulated so far.
+   */
+  getStepCount(): number {
+    return this.steps.length;
   }
 }
