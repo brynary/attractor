@@ -50,7 +50,7 @@ export class ToolHandler implements Handler {
 
         const outcome = createOutcome({
           status: StageStatus.SUCCESS,
-          contextUpdates: { "tool.output": stdout, last_stage: node.id },
+          contextUpdates: { "tool.output": stdout },
           notes: "Tool completed: " + command,
         });
         await Bun.write(join(stageDir, "status.json"), JSON.stringify(outcome, null, 2));

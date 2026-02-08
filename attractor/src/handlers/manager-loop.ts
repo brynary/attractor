@@ -70,6 +70,7 @@ function createInProcessSpawner(
     const runPromise = runner.run(graph).then((result: PipelineResult) => {
       // Write final checkpoint so the observe loop can pick it up
       const checkpoint: Checkpoint = {
+        pipelineId: "sub-pipeline",
         timestamp: new Date().toISOString(),
         currentNode: result.completedNodes[result.completedNodes.length - 1] ?? "",
         completedNodes: result.completedNodes,

@@ -53,10 +53,12 @@ export class CodergenHandler implements Handler {
         responseText = result;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        return createOutcome({
+        const failOutcome = createOutcome({
           status: StageStatus.FAIL,
           failureReason: message,
         });
+        await Bun.write(join(stageDir, "status.json"), JSON.stringify(failOutcome, null, 2));
+        return failOutcome;
       }
     } else {
       responseText = "[Simulated] Response for stage: " + node.id;

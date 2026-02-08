@@ -88,7 +88,6 @@ export class WaitForHumanHandler implements Handler {
             contextUpdates: {
               "human.gate.selected": found.key,
               "human.gate.label": found.label,
-              last_stage: node.id,
             },
           });
         }
@@ -125,7 +124,6 @@ export class WaitForHumanHandler implements Handler {
       contextUpdates: {
         "human.gate.selected": selected.key,
         "human.gate.label": selected.label,
-        last_stage: node.id,
       },
     });
     await Bun.write(join(stageDir, "status.json"), JSON.stringify(outcome, null, 2));

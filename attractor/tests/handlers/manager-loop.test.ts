@@ -55,6 +55,7 @@ function writeCheckpoint(dir: string, checkpoint: Checkpoint): void {
 
 function makeCheckpoint(overrides: Partial<Checkpoint> = {}): Checkpoint {
   return {
+    pipelineId: "test-manager-loop",
     timestamp: new Date().toISOString(),
     currentNode: "work",
     completedNodes: ["start", "work"],

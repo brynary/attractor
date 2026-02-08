@@ -90,6 +90,8 @@ export interface Graph {
   nodes: Map<string, Node>;
   edges: Edge[];
   subgraphs?: Subgraph[];
+  /** Set by preparePipeline/run/resume after transforms+validation to prevent double-transform. */
+  _transformsApplied?: boolean;
 }
 
 export function getStringAttr(

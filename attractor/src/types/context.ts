@@ -13,7 +13,7 @@ export class Context {
     this.values.set(key, value);
   }
 
-  get(key: string, defaultValue: ContextValue = ""): ContextValue {
+  get(key: string, defaultValue?: ContextValue): ContextValue | undefined {
     return this.values.get(key) ?? defaultValue;
   }
 

@@ -43,5 +43,6 @@ export function preparePipeline(
   }
 
   const diagnostics = validateOrRaise(graph, extraLintRules);
+  graph._transformsApplied = true;
   return { graph, diagnostics };
 }

@@ -41,7 +41,28 @@ export type { Option, Question, Answer, Interviewer } from "./interviewer.js";
 export { createQuestion, createAnswer } from "./interviewer.js";
 
 export { PipelineEventKind } from "./events.js";
-export type { PipelineEvent } from "./events.js";
+export type {
+  PipelineEvent,
+  PipelineEventDataMap,
+  PipelineStartedData,
+  PipelineCompletedData,
+  PipelineFailedData,
+  StageStartedData,
+  StageCompletedData,
+  StageFailedData,
+  StageRetryingData,
+  ParallelStartedData,
+  ParallelBranchStartedData,
+  ParallelBranchCompletedData,
+  ParallelCompletedData,
+  InterviewStartedData,
+  InterviewCompletedData,
+  InterviewTimeoutData,
+  CheckpointSavedData,
+  PipelineRestartedData,
+  ToolHookPreData,
+  ToolHookPostData,
+} from "./events.js";
 
 export { Severity } from "./diagnostic.js";
 export type { Diagnostic, LintRule } from "./diagnostic.js";

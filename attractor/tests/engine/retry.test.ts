@@ -63,12 +63,12 @@ describe("buildRetryPolicy", () => {
     expect(policy.maxAttempts).toBe(3); // 2 + 1
   });
 
-  test("defaults to preset maxAttempts when nothing set", () => {
+  test("defaults to 1 attempt when nothing set (spec 3.5)", () => {
     const node = makeNode("n");
     const graph = makeGraph();
     const policy = buildRetryPolicy(node, graph);
-    // standard preset has maxAttempts=5
-    expect(policy.maxAttempts).toBe(5);
+    // Spec 3.5: default is 0 retries (1 attempt) when no retry config
+    expect(policy.maxAttempts).toBe(1);
   });
 
   test("uses preset maxAttempts for named preset when no max_retries or graph default", () => {

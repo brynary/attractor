@@ -25,6 +25,7 @@ describe("checkpoint save and load", () => {
     const path = join(dir, "checkpoint.json");
 
     const checkpoint: Checkpoint = {
+      pipelineId: "test-pipeline-1",
       timestamp: "2025-01-01T00:00:00.000Z",
       currentNode: "implement",
       completedNodes: ["start", "plan", "implement"],
@@ -53,6 +54,7 @@ describe("checkpoint save and load", () => {
     const path = join(dir, "nested", "deep", "checkpoint.json");
 
     const checkpoint: Checkpoint = {
+      pipelineId: "test-pipeline-2",
       timestamp: "2025-01-01T00:00:00.000Z",
       currentNode: "start",
       completedNodes: ["start"],

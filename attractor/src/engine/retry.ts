@@ -12,23 +12,28 @@ import { delayForAttempt, PRESET_POLICIES } from "../types/retry.js";
  * max_retries attribute, the graph default_max_retry, and backoff config.
  */
 export function buildRetryPolicy(node: Node, graph: Graph): RetryPolicy {
-  // Resolve preset: node retry_policy attr -> "standard" default
+  // Resolve max retries: node max_retries -> graph default_max_retry -> node retry_policy preset -> 1
+  const nodeHasMaxRetries = node.attributes.has("max_retries");
+  const graphHasDefault = graph.attributes.has("default_max_retry");
+  const nodeHasRetryPolicy = node.attributes.has("retry_policy");
+
+  // Resolve preset for backoff/shouldRetry config
   const presetName = getStringAttr(node.attributes, "retry_policy", "standard");
   const base = PRESET_POLICIES[presetName] ?? PRESET_POLICIES["standard"];
   if (!base) {
     throw new Error("standard retry policy not found");
   }
 
-  // Resolve max retries: node max_retries -> graph default_max_retry -> preset maxAttempts
-  const nodeHasMaxRetries = node.attributes.has("max_retries");
-  const graphHasDefault = graph.attributes.has("default_max_retry");
   let maxAttempts: number;
   if (nodeHasMaxRetries) {
     maxAttempts = getIntegerAttr(node.attributes, "max_retries", 0) + 1;
   } else if (graphHasDefault) {
     maxAttempts = getIntegerAttr(graph.attributes, "default_max_retry", 50) + 1;
-  } else {
+  } else if (nodeHasRetryPolicy) {
     maxAttempts = base.maxAttempts;
+  } else {
+    // Spec 3.5: default is 0 retries (1 attempt)
+    maxAttempts = 1;
   }
 
   return {

@@ -363,6 +363,9 @@ const typeKnownRule: LintRule = {
   },
 };
 
+const FIDELITY_FIX =
+  "Use one of: full, truncate, compact, summary:low, summary:medium, summary:high.";
+
 const fidelityValidRule: LintRule = {
   name: "fidelity_valid",
   apply(graph: Graph): Diagnostic[] {
@@ -376,10 +379,35 @@ const fidelityValidRule: LintRule = {
             severity: Severity.WARNING,
             message: `Node "${node.id}" has invalid fidelity mode "${fidelity}".`,
             nodeId: node.id,
-            fix: "Use one of: full, truncate, compact, summary:low, summary:medium, summary:high.",
+            fix: FIDELITY_FIX,
           }),
         );
       }
+    }
+    for (const edge of graph.edges) {
+      const fidelity = getStringAttr(edge.attributes, "fidelity");
+      if (fidelity !== "" && !isValidFidelityMode(fidelity)) {
+        diagnostics.push(
+          createDiagnostic({
+            rule: "fidelity_valid",
+            severity: Severity.WARNING,
+            message: `Edge "${edge.from}" -> "${edge.to}" has invalid fidelity mode "${fidelity}".`,
+            edge: [edge.from, edge.to],
+            fix: FIDELITY_FIX,
+          }),
+        );
+      }
+    }
+    const defaultFidelity = getStringAttr(graph.attributes, "default_fidelity");
+    if (defaultFidelity !== "" && !isValidFidelityMode(defaultFidelity)) {
+      diagnostics.push(
+        createDiagnostic({
+          rule: "fidelity_valid",
+          severity: Severity.WARNING,
+          message: `Graph default_fidelity has invalid mode "${defaultFidelity}".`,
+          fix: FIDELITY_FIX,
+        }),
+      );
     }
     return diagnostics;
   },

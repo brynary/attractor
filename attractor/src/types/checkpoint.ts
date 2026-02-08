@@ -1,6 +1,7 @@
 import type { ContextValue } from "./context.js";
 
 export interface Checkpoint {
+  pipelineId: string;
   timestamp: string;
   currentNode: string;
   completedNodes: string[];

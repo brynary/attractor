@@ -309,7 +309,7 @@ describe("PipelineRunner", () => {
     const result = await runner.run(graph);
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     // stale_key from first pass should not be in context after restart
-    expect(result.context.get("stale_key")).toBe("");
+    expect(result.context.get("stale_key")).toBeUndefined();
     // graph attrs should be re-mirrored
     expect(result.context.get("graph.goal")).toBe("loop goal");
   });
@@ -361,7 +361,8 @@ describe("PipelineRunner", () => {
     expect(result.outcome.status).toBe(StageStatus.SUCCESS);
     // After restart, pipeline restarts at target (setup), then work again, then exit
     expect(records).toEqual(["start", "setup", "work", "setup", "work"]);
-    expect(result.completedNodes).toContain("--- restart 1 ---");
+    // State isolation: completedNodes only contains post-restart nodes
+    expect(result.completedNodes).toEqual(["setup", "work"]);
   });
 
   test("loop_restart emits PIPELINE_RESTARTED event", async () => {
@@ -467,8 +468,8 @@ describe("PipelineRunner", () => {
     expect(restartEvents).toHaveLength(2);
     expect(restartEvents.at(0)?.data["restartCount"]).toBe(1);
     expect(restartEvents.at(1)?.data["restartCount"]).toBe(2);
-    expect(result.completedNodes).toContain("--- restart 1 ---");
-    expect(result.completedNodes).toContain("--- restart 2 ---");
+    // State isolation: completedNodes only contains post-last-restart nodes
+    expect(result.completedNodes).toEqual(["setup", "work"]);
   });
 
   test("loop_restart clears nodeOutcomes from previous iteration", async () => {

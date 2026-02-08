@@ -103,6 +103,7 @@ describe("PipelineRunner.resume", () => {
 
     // Checkpoint after completing start and A
     const checkpoint: Checkpoint = {
+      pipelineId: "resume-test-1",
       timestamp: new Date().toISOString(),
       currentNode: "A",
       completedNodes: ["start", "A"],
@@ -169,12 +170,13 @@ describe("PipelineRunner.resume", () => {
     );
 
     const checkpoint: Checkpoint = {
+      pipelineId: "resume-test-2",
       timestamp: new Date().toISOString(),
       currentNode: "A",
       completedNodes: ["start", "A"],
       nodeRetries: {},
       nodeOutcomes: { start: "success", A: "success" },
-      contextValues: { outcome: "success" },
+      contextValues: { outcome: "success", "_fidelity.mode": "full" },
       logs: [],
     };
     await saveCheckpoint(checkpoint, checkpointPath);

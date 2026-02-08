@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type { Graph } from "../types/graph.js";
+import type { Checkpoint } from "../types/checkpoint.js";
 import type { PipelineResult, PipelineRunnerConfig } from "../engine/runner.js";
 import { PipelineRunner } from "../engine/runner.js";
 import { PipelineEventEmitter } from "../events/emitter.js";
@@ -12,6 +13,7 @@ export interface PipelineRecord {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
   result: PipelineResult | undefined;
+  latestCheckpoint: Checkpoint | undefined;
   dotSource: string;
   emitter: PipelineEventEmitter;
   interviewer: WebInterviewer;
@@ -76,6 +78,7 @@ async function handlePostPipeline(
     id,
     status: "running",
     result: undefined,
+    latestCheckpoint: undefined,
     dotSource: dotContent,
     emitter,
     interviewer,
@@ -88,6 +91,9 @@ async function handlePostPipeline(
     ...ctx.runnerConfig,
     eventEmitter: emitter,
     interviewer,
+    onCheckpoint(checkpoint) {
+      record.latestCheckpoint = checkpoint;
+    },
   });
 
   runner.run(graph).then(
@@ -274,11 +280,15 @@ function handleGetContext(
     return errorResponse("Pipeline not found", 404);
   }
 
-  if (!record.result) {
-    return jsonResponse({ context: {} });
+  if (record.result) {
+    return jsonResponse({ context: record.result.context.snapshot() });
   }
 
-  return jsonResponse({ context: record.result.context.snapshot() });
+  if (record.latestCheckpoint) {
+    return jsonResponse({ context: record.latestCheckpoint.contextValues });
+  }
+
+  return jsonResponse({ context: {} });
 }
 
 /** GET /pipelines/:id/checkpoint — get pipeline checkpoint */
@@ -291,16 +301,27 @@ function handleGetCheckpoint(
     return errorResponse("Pipeline not found", 404);
   }
 
-  if (!record.result) {
-    return jsonResponse({ checkpoint: null });
+  if (record.result) {
+    return jsonResponse({
+      checkpoint: {
+        completedNodes: record.result.completedNodes,
+        status: record.result.outcome.status,
+      },
+    });
   }
 
-  return jsonResponse({
-    checkpoint: {
-      completedNodes: record.result.completedNodes,
-      status: record.result.outcome.status,
-    },
-  });
+  if (record.latestCheckpoint) {
+    return jsonResponse({
+      checkpoint: {
+        completedNodes: record.latestCheckpoint.completedNodes,
+        currentNode: record.latestCheckpoint.currentNode,
+        nodeOutcomes: record.latestCheckpoint.nodeOutcomes,
+        timestamp: record.latestCheckpoint.timestamp,
+      },
+    });
+  }
+
+  return jsonResponse({ checkpoint: null });
 }
 
 /** Main request router */

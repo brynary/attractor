@@ -4,13 +4,13 @@ import type { Checkpoint } from "../types/checkpoint.js";
 import type { Handler } from "../types/handler.js";
 import type { Interviewer } from "../types/interviewer.js";
 import type { CodergenBackend } from "../types/handler.js";
-import type { PipelineEvent, PipelineEventKind } from "../types/events.js";
+import type { PipelineEvent, PipelineEventKind, PipelineEventDataMap } from "../types/events.js";
 import type { Transform } from "../types/transform.js";
 import type { LintRule } from "../types/diagnostic.js";
 import { Context } from "../types/context.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
 import { PipelineEventKind as EventKind } from "../types/events.js";
-import { getStringAttr, getBooleanAttr, attrToString } from "../types/graph.js";
+import { getStringAttr, getBooleanAttr, getDurationAttr, attrToString } from "../types/graph.js";
 import { selectEdge } from "./edge-selection.js";
 import { buildRetryPolicy, executeWithRetry } from "./retry.js";
 import { checkGoalGates, getRetryTarget } from "./goal-gates.js";
@@ -19,10 +19,10 @@ import { resolveFidelity } from "./fidelity.js";
 import { validateOrRaise } from "../validation/validate.js";
 import { incomingEdges } from "../types/graph.js";
 import { builtInTransforms } from "../transforms/index.js";
-import { executePreHook, executePostHook } from "./tool-hooks.js";
 import { FidelityMode as FM } from "../types/fidelity.js";
 import { join } from "path";
 import { mkdir, writeFile } from "fs/promises";
+import { existsSync } from "fs";
 import { randomUUID } from "crypto";
 
 /** Shape-to-handler-type mapping from spec 2.8 */
@@ -95,6 +95,7 @@ export interface PipelineRunnerConfig {
   extraLintRules?: LintRule[];
   eventEmitter?: EventEmitter;
   onEvent?: (event: PipelineEvent) => void;
+  onCheckpoint?: (checkpoint: Checkpoint) => void;
   logsRoot?: string;
   cleanup?: () => Promise<void>;
 }
@@ -157,10 +158,12 @@ export class PipelineRunner {
     this.additionalTransforms.push(transform);
   }
 
-  async run(input: Graph): Promise<PipelineResult> {
+  /** Apply transforms + validate, skipping if already applied (prevents double-transform). */
+  private prepareGraph(input: Graph): Graph {
+    if (input._transformsApplied) {
+      return input;
+    }
     let graph = input;
-
-    // Apply built-in transforms first, then config transforms, then registered transforms
     const allTransforms = [
       ...builtInTransforms(),
       ...(this.config.transforms ?? []),
@@ -169,9 +172,13 @@ export class PipelineRunner {
     for (const transform of allTransforms) {
       graph = transform.apply(graph);
     }
-
-    // Validate graph (rejects error-severity diagnostics)
     validateOrRaise(graph, this.config.extraLintRules);
+    graph._transformsApplied = true;
+    return graph;
+  }
+
+  async run(input: Graph): Promise<PipelineResult> {
+    const graph = this.prepareGraph(input);
 
     // Initialize context
     const context = new Context();
@@ -208,6 +215,7 @@ export class PipelineRunner {
 
     // Save initial checkpoint
     await this.saveCheckpointSafe(logsRoot, {
+      pipelineId: this.pipelineId,
       timestamp: new Date().toISOString(),
       currentNode: state.currentNode.id,
       completedNodes: [],
@@ -220,7 +228,8 @@ export class PipelineRunner {
     return this.executeLoop(graph, state);
   }
 
-  async resume(graph: Graph, checkpointPath: string): Promise<PipelineResult> {
+  async resume(input: Graph, checkpointPath: string): Promise<PipelineResult> {
+    const graph = this.prepareGraph(input);
     const checkpoint = await loadCheckpoint(checkpointPath);
 
     // Restore context
@@ -276,7 +285,7 @@ export class PipelineRunner {
       currentNode: nextNode,
       lastOutcome,
       restartCount: 0,
-      degradeNextFidelity: true,
+      degradeNextFidelity: context.getString("_fidelity.mode") === FM.FULL,
       logsRoot,
     };
 
@@ -343,32 +352,8 @@ export class PipelineRunner {
         return { outcome: failOutcome, completedNodes, context };
       }
 
-      // Tool hooks: pre-hook
-      const preHookCmd = getStringAttr(currentNode.attributes, "tool_hooks.pre")
-        || getStringAttr(graph.attributes, "tool_hooks.pre");
-      if (preHookCmd !== "") {
-        this.emitEvent(EventKind.TOOL_HOOK_PRE, { nodeId: currentNode.id, command: preHookCmd });
-        const hookResult = await executePreHook(preHookCmd, "handler", {}, logsRoot, currentNode.id);
-        if (!hookResult.proceed) {
-          const skipOutcome = createOutcome({
-            status: StageStatus.SKIPPED,
-            notes: "pre-hook returned non-zero, skipping stage",
-          });
-          completedNodes.push(currentNode.id);
-          nodeOutcomes.set(currentNode.id, skipOutcome);
-          lastOutcome = skipOutcome;
-          this.emitEvent(EventKind.STAGE_COMPLETED, { nodeId: currentNode.id, status: skipOutcome.status });
-          const skipEdge = selectEdge(currentNode, skipOutcome, context, graph);
-          if (!skipEdge) break;
-          const skipTarget = graph.nodes.get(skipEdge.to);
-          if (!skipTarget) break;
-          currentNode = skipTarget;
-          continue;
-        }
-      }
-
       const retryPolicy = buildRetryPolicy(currentNode, graph);
-      const retryResult = await executeWithRetry(
+      const retryExecution = executeWithRetry(
         currentNode,
         context,
         graph,
@@ -386,14 +371,40 @@ export class PipelineRunner {
           },
         },
       );
-      const outcome = retryResult.outcome;
 
-      // Tool hooks: post-hook
-      const postHookCmd = getStringAttr(currentNode.attributes, "tool_hooks.post")
-        || getStringAttr(graph.attributes, "tool_hooks.post");
-      if (postHookCmd !== "") {
-        this.emitEvent(EventKind.TOOL_HOOK_POST, { nodeId: currentNode.id, command: postHookCmd });
-        await executePostHook(postHookCmd, "handler", {}, outcome.status, logsRoot, currentNode.id);
+      // Node timeout enforcement (spec 2.6: timeout attribute)
+      const timeoutMs = getDurationAttr(currentNode.attributes, "timeout");
+      let retryResult: Awaited<typeof retryExecution>;
+      if (timeoutMs !== undefined) {
+        const timeoutPromise = new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error(`Node timeout exceeded: ${timeoutMs}ms`)), timeoutMs);
+        });
+        try {
+          retryResult = await Promise.race([retryExecution, timeoutPromise]);
+        } catch (error: unknown) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          retryResult = {
+            outcome: createOutcome({
+              status: StageStatus.FAIL,
+              failureReason: err.message,
+            }),
+            attempts: 0,
+          };
+        }
+      } else {
+        retryResult = await retryExecution;
+      }
+
+      // auto_status enforcement (spec 2.6/Appendix C)
+      let outcome = retryResult.outcome;
+      if (getBooleanAttr(currentNode.attributes, "auto_status", false)) {
+        const statusPath = join(logsRoot, currentNode.id, "status.json");
+        if (!existsSync(statusPath)) {
+          outcome = createOutcome({
+            status: StageStatus.SUCCESS,
+            notes: "auto-status: handler completed without writing status",
+          });
+        }
       }
 
       // Step 3: Record completion
@@ -414,6 +425,13 @@ export class PipelineRunner {
         context.set("preferred_label", outcome.preferredLabel);
       }
 
+      // Built-in context keys (spec 5.2)
+      context.set("last_stage", currentNode.id);
+      if (!outcome.contextUpdates["last_response"]) {
+        context.set("last_response", outcome.notes.slice(0, 200));
+      }
+      context.set(`internal.retry_count.${currentNode.id}`, retryResult.attempts);
+
       // Step 5: Save checkpoint
       const retriesRecord: Record<string, number> = {};
       for (const [nodeId, count] of nodeRetries) {
@@ -424,6 +442,7 @@ export class PipelineRunner {
         outcomesRecord[nodeId] = o.status;
       }
       await this.saveCheckpointSafe(logsRoot, {
+        pipelineId: this.pipelineId,
         timestamp: new Date().toISOString(),
         currentNode: currentNode.id,
         completedNodes: [...completedNodes],
@@ -433,11 +452,18 @@ export class PipelineRunner {
         logs: [...context.logs()],
       });
 
-      // Step 6: Select next edge
+      // Step 6: Select next edge with failure routing (spec 3.7)
+      // Order: (1) fail edge, (2) node retry_target, (3) node fallback_retry_target,
+      //        (4) graph retry_target, (5) graph fallback_retry_target, (6) unconditional edge, (7) termination
       const nextEdge = selectEdge(currentNode, outcome, context, graph);
-      if (!nextEdge) {
-        // GAP-2: Try retry_target before terminating on failure
-        if (outcome.status === StageStatus.FAIL) {
+
+      if (outcome.status === StageStatus.FAIL) {
+        // Check if selectEdge found a fail-condition edge (step 1)
+        const hasFailEdge = nextEdge !== undefined &&
+          getStringAttr(nextEdge.attributes, "condition").includes("outcome=fail");
+
+        if (!hasFailEdge) {
+          // Steps 2-5: consult retry_target chain (takes priority over unconditional edges)
           const failRetryTarget = getRetryTarget(currentNode, graph);
           if (failRetryTarget) {
             const targetNode = graph.nodes.get(failRetryTarget);
@@ -446,23 +472,30 @@ export class PipelineRunner {
               continue;
             }
           }
-          this.emitEvent(EventKind.PIPELINE_FAILED, {
-            reason: "Stage failed with no outgoing fail edge",
-            nodeId: currentNode.id,
-          });
-          return {
-            outcome: createOutcome({
-              status: StageStatus.FAIL,
-              failureReason: `Stage ${currentNode.id} failed with no outgoing fail edge`,
-            }),
-            completedNodes,
-            context,
-          };
+          // No retry_target found: if no edge at all, terminate
+          if (!nextEdge) {
+            this.emitEvent(EventKind.PIPELINE_FAILED, {
+              reason: "Stage failed with no outgoing fail edge",
+              nodeId: currentNode.id,
+            });
+            return {
+              outcome: createOutcome({
+                status: StageStatus.FAIL,
+                failureReason: `Stage ${currentNode.id} failed with no outgoing fail edge`,
+              }),
+              completedNodes,
+              context,
+            };
+          }
+          // Otherwise follow the unconditional edge (step 6)
         }
+      }
+
+      if (!nextEdge) {
         break;
       }
 
-      // Step 7: Handle loop_restart
+      // Step 7: Handle loop_restart — complete state isolation between restarts
       if (getBooleanAttr(nextEdge.attributes, "loop_restart", false)) {
         restartCount++;
 
@@ -470,15 +503,13 @@ export class PipelineRunner {
         context = new Context();
         mirrorGraphAttributes(graph, context);
 
-        // Clear per-node state from previous iteration
+        // Clear ALL per-node state for complete isolation
         nodeOutcomes.clear();
         nodeRetries.clear();
+        completedNodes.length = 0;
 
         // Fresh logs subdirectory for this restart
         logsRoot = join(baseLogsRoot, "restart-" + String(restartCount));
-
-        // Separator marker in completedNodes
-        completedNodes.push(`--- restart ${restartCount} ---`);
 
         // Advance to target node
         const restartTarget = graph.nodes.get(nextEdge.to);
@@ -536,6 +567,7 @@ export class PipelineRunner {
       finalOutcomes[nodeId] = o.status;
     }
     await this.saveCheckpointSafe(logsRoot, {
+      pipelineId: this.pipelineId,
       timestamp: new Date().toISOString(),
       currentNode: currentNode.id,
       completedNodes: [...completedNodes],
@@ -571,18 +603,21 @@ export class PipelineRunner {
     } catch {
       // Checkpoint save failure is non-fatal
     }
+    if (this.config.onCheckpoint) {
+      this.config.onCheckpoint(checkpoint);
+    }
   }
 
-  private emitEvent(
-    kind: PipelineEventKind,
-    data: Record<string, unknown>,
+  private emitEvent<K extends PipelineEventKind>(
+    kind: K,
+    data: PipelineEventDataMap[K],
   ): void {
-    const event: PipelineEvent = {
+    const event = {
       kind,
       timestamp: new Date(),
       pipelineId: this.pipelineId,
       data,
-    };
+    } satisfies PipelineEvent;
     if (this.config.eventEmitter) {
       this.config.eventEmitter.emit(event);
     }
