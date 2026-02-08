@@ -486,4 +486,83 @@ describe("Session", () => {
     expect(adapter.calls[0]?.model).toBe("test-model");
     expect(adapter.calls[0]?.provider).toBe("anthropic");
   });
+
+  test("maxTurns=0 means unlimited (runs to natural completion)", async () => {
+    const files = new Map([["/test/x.ts", "x"]]);
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          { id: "tc1", name: "read_file", arguments: { file_path: "/test/x.ts" } },
+        ]),
+        makeToolCallResponse([
+          { id: "tc2", name: "read_file", arguments: { file_path: "/test/x.ts" } },
+        ]),
+        makeTextResponse("done"),
+      ],
+      { files, config: { maxTurns: 0 } },
+    );
+
+    await session.submit("keep going");
+
+    // All 3 LLM responses consumed: user, assistant+tc, tool_results, assistant+tc, tool_results, assistant
+    expect(session.history).toHaveLength(6);
+    const assistantTurns = session.history.filter((t) => t.kind === "assistant");
+    expect(assistantTurns).toHaveLength(3);
+  });
+
+  test("abort via close transitions to CLOSED state", async () => {
+    const files = new Map([["/test/x.ts", "x"]]);
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          { id: "tc1", name: "read_file", arguments: { file_path: "/test/x.ts" } },
+        ]),
+        makeTextResponse("should not reach"),
+      ],
+      { files },
+    );
+
+    await session.close();
+    await session.submit("do stuff");
+
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
+  test("LLM error transitions to CLOSED state", async () => {
+    const adapter = new StubAdapter("anthropic", [
+      { error: new Error("LLM exploded") },
+    ]);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    await session.submit("trigger error");
+
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
+  test("context window warning emitted when usage exceeds 80%", async () => {
+    // contextWindowSize for anthropic profile is 200_000 tokens
+    // 80% threshold = 160_000 tokens
+    // At 4 chars/token, need 640_001+ chars to exceed threshold
+    const largeContent = "x".repeat(640_004);
+    const { session } = createTestSession(
+      [makeTextResponse(largeContent)],
+    );
+
+    const eventsPromise = collectEvents(session, EventKind.SESSION_END);
+    await session.submit("generate big response");
+
+    const events = await eventsPromise;
+    const contextWarning = events.find(
+      (e) => e.kind === EventKind.ERROR && e.data.type === "context_warning",
+    );
+    expect(contextWarning).toBeDefined();
+    expect(contextWarning?.data.estimatedTokens).toBeGreaterThan(160_000);
+  });
 });

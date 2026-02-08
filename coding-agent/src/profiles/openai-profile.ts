@@ -10,13 +10,24 @@ import {
   createGlobTool,
 } from "../tools/core-tools.js";
 import { createApplyPatchTool } from "../tools/apply-patch.js";
+import type { SessionFactory, SubAgentDepthConfig } from "../tools/subagent-tools.js";
+import {
+  createSpawnAgentTool,
+  createSendInputTool,
+  createWaitTool,
+  createCloseAgentTool,
+} from "../tools/subagent-tools.js";
+import type { SubAgentHandle } from "../tools/subagent-tools.js";
 import { OPENAI_BASE_PROMPT } from "./prompts/openai-base.js";
 import {
   buildEnvironmentContext,
   buildSystemPrompt,
 } from "./system-prompt.js";
 
-export function createOpenAIProfile(model: string): ProviderProfile {
+export function createOpenAIProfile(
+  model: string,
+  options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
+): ProviderProfile {
   const registry = new ToolRegistry();
   registry.register(createReadFileTool());
   registry.register(createWriteFileTool());
@@ -26,6 +37,15 @@ export function createOpenAIProfile(model: string): ProviderProfile {
   );
   registry.register(createGrepTool());
   registry.register(createGlobTool());
+
+  if (options?.sessionFactory) {
+    const agents = new Map<string, SubAgentHandle>();
+    const depthConfig = options.subagentConfig ?? { currentDepth: 0, maxDepth: 1 };
+    registry.register(createSpawnAgentTool(options.sessionFactory, agents, depthConfig));
+    registry.register(createSendInputTool(agents));
+    registry.register(createWaitTool(agents));
+    registry.register(createCloseAgentTool(agents));
+  }
 
   return {
     id: "openai",

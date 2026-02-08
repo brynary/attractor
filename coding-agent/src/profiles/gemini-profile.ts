@@ -18,13 +18,13 @@ import {
   createCloseAgentTool,
 } from "../tools/subagent-tools.js";
 import type { SubAgentHandle } from "../tools/subagent-tools.js";
-import { ANTHROPIC_BASE_PROMPT } from "./prompts/anthropic-base.js";
+import { GEMINI_BASE_PROMPT } from "./prompts/gemini-base.js";
 import {
   buildEnvironmentContext,
   buildSystemPrompt,
 } from "./system-prompt.js";
 
-export function createAnthropicProfile(
+export function createGeminiProfile(
   model: string,
   options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
 ): ProviderProfile {
@@ -33,7 +33,7 @@ export function createAnthropicProfile(
   registry.register(createWriteFileTool());
   registry.register(createEditFileTool());
   registry.register(
-    createShellTool({ defaultTimeoutMs: 120_000, maxTimeoutMs: 600_000 }),
+    createShellTool({ defaultTimeoutMs: 10_000, maxTimeoutMs: 600_000 }),
   );
   registry.register(createGrepTool());
   registry.register(createGlobTool());
@@ -48,7 +48,7 @@ export function createAnthropicProfile(
   }
 
   return {
-    id: "anthropic",
+    id: "gemini",
     model,
     toolRegistry: registry,
 
@@ -62,7 +62,7 @@ export function createAnthropicProfile(
         .map((t) => `- ${t.name}: ${t.description}`)
         .join("\n");
       return buildSystemPrompt(
-        ANTHROPIC_BASE_PROMPT,
+        GEMINI_BASE_PROMPT,
         envContext,
         toolDescs,
         projectDocs,
@@ -77,9 +77,9 @@ export function createAnthropicProfile(
       return null;
     },
 
-    supportsReasoning: true,
+    supportsReasoning: false,
     supportsStreaming: true,
     supportsParallelToolCalls: true,
-    contextWindowSize: 200_000,
+    contextWindowSize: 1_000_000,
   };
 }

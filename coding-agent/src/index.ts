@@ -31,9 +31,11 @@ export type {
   SubAgentHandle,
   SubAgentResult,
   SessionFactory,
+  SubAgentDepthConfig,
 } from "./tools/subagent-tools.js";
 export { createAnthropicProfile } from "./profiles/anthropic-profile.js";
 export { createOpenAIProfile } from "./profiles/openai-profile.js";
+export { createGeminiProfile } from "./profiles/gemini-profile.js";
 export {
   buildEnvironmentContext,
   discoverProjectDocs,

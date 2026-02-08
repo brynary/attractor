@@ -21,9 +21,15 @@ export type SessionFactory = (options: {
   maxTurns?: number;
 }) => Promise<SubAgentHandle>;
 
+export interface SubAgentDepthConfig {
+  currentDepth: number;
+  maxDepth: number;
+}
+
 export function createSpawnAgentTool(
   factory: SessionFactory,
   agents: Map<string, SubAgentHandle>,
+  depthConfig?: SubAgentDepthConfig,
 ): RegisteredTool {
   return {
     definition: {
@@ -45,6 +51,10 @@ export function createSpawnAgentTool(
       },
     },
     executor: async (args) => {
+      if (depthConfig && depthConfig.currentDepth >= depthConfig.maxDepth) {
+        return `Error: Subagent spawning is disabled at depth ${depthConfig.currentDepth} (max depth: ${depthConfig.maxDepth})`;
+      }
+
       const task = args.task as string;
       const workingDir = args.working_dir as string | undefined;
       const model = args.model as string | undefined;

@@ -63,6 +63,25 @@ describe("createAnthropicProfile", () => {
     expect(profile.contextWindowSize).toBe(200_000);
   });
 
+  test("registers subagent tools when sessionFactory provided", () => {
+    const factory = async () => ({
+      id: "agent-1",
+      status: "running" as const,
+      submit: async () => {},
+      waitForCompletion: async () => ({ output: "", success: true, turnsUsed: 0 }),
+      close: async () => {},
+    });
+    const profileWithSubagents = createAnthropicProfile("claude-opus-4-6", {
+      sessionFactory: factory,
+    });
+    const names = profileWithSubagents.toolRegistry.names();
+    expect(names).toContain("spawn_agent");
+    expect(names).toContain("send_input");
+    expect(names).toContain("wait");
+    expect(names).toContain("close_agent");
+    expect(profileWithSubagents.tools().length).toBe(10);
+  });
+
   test("shell tool uses 120s default timeout", async () => {
     const env = new StubExecutionEnvironment({
       commandResults: new Map([

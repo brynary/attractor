@@ -110,6 +110,7 @@ export class Session {
 
     // 4. Loop
     let roundCount = 0;
+    let hadLLMError = false;
 
     while (true) {
       // a. Check max tool rounds
@@ -122,7 +123,7 @@ export class Session {
       }
 
       // b. Check max turns
-      if (countTurns(this.history) >= this.config.maxTurns) {
+      if (this.config.maxTurns > 0 && countTurns(this.history) >= this.config.maxTurns) {
         this.emit(EventKind.TURN_LIMIT, {
           reason: "max_turns",
           limit: this.config.maxTurns,
@@ -177,6 +178,7 @@ export class Session {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         this.emit(EventKind.ERROR, { error: errorMessage });
+        hadLLMError = true;
         break;
       }
 
@@ -196,6 +198,9 @@ export class Session {
         responseId: response.id,
         timestamp: new Date(),
       });
+
+      // i2. Check context usage
+      this.checkContextUsage();
 
       // j. Emit
       this.emit(EventKind.ASSISTANT_TEXT_END, {
@@ -240,17 +245,25 @@ export class Session {
       }
     }
 
-    // 7. Process follow-ups
+    // 7. Check abort/error → CLOSED
+    if (this.abortController.signal.aborted || hadLLMError) {
+      this.state = SessionState.CLOSED;
+      this.emit(EventKind.SESSION_END);
+      this.emitter.close();
+      return;
+    }
+
+    // 8. Process follow-ups
     const nextInput = this.followupQueue.shift();
     if (nextInput !== undefined) {
       await this.processInput(nextInput);
       return;
     }
 
-    // 8. Set state
+    // 9. Set state
     this.state = SessionState.IDLE;
 
-    // 9. Emit SESSION_END
+    // 10. Emit SESSION_END
     this.emit(EventKind.SESSION_END);
   }
 
@@ -360,6 +373,32 @@ export class Session {
         timestamp: new Date(),
       });
       this.emit(EventKind.STEERING_INJECTED, { content: msg });
+    }
+  }
+
+  private checkContextUsage(): void {
+    let totalChars = 0;
+    for (const turn of this.history) {
+      if (turn.kind === "user" || turn.kind === "system" || turn.kind === "steering") {
+        totalChars += turn.content.length;
+      } else if (turn.kind === "assistant") {
+        totalChars += turn.content.length;
+        if (turn.reasoning) totalChars += turn.reasoning.length;
+      } else if (turn.kind === "tool_results") {
+        for (const r of turn.results) {
+          totalChars += typeof r.content === "string" ? r.content.length : JSON.stringify(r.content).length;
+        }
+      }
+    }
+    const estimatedTokens = totalChars / 4;
+    const threshold = this.providerProfile.contextWindowSize * 0.8;
+    if (estimatedTokens > threshold) {
+      this.emit(EventKind.ERROR, {
+        type: "context_warning",
+        estimatedTokens,
+        contextWindowSize: this.providerProfile.contextWindowSize,
+        usagePercent: Math.round((estimatedTokens / this.providerProfile.contextWindowSize) * 100),
+      });
     }
   }
 

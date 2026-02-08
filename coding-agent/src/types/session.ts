@@ -28,7 +28,7 @@ export interface SessionConfig {
 }
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  maxTurns: 200,
+  maxTurns: 0,
   maxToolRoundsPerInput: 50,
   defaultCommandTimeoutMs: 120_000,
   maxCommandTimeoutMs: 600_000,
@@ -36,7 +36,7 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   toolOutputLimits: { maxChars: 30_000, maxLines: 500 },
   enableLoopDetection: true,
   loopDetectionWindow: 5,
-  maxSubagentDepth: 3,
+  maxSubagentDepth: 1,
 };
 
 export interface UserTurn {

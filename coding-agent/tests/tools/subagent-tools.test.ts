@@ -52,6 +52,30 @@ describe("spawn_agent", () => {
     expect(result).toContain("running");
     expect(agents.has("agent-1")).toBe(true);
   });
+
+  test("depth at limit returns error result", async () => {
+    const agents = new Map<string, SubAgentHandle>();
+    const { factory } = createMockFactory();
+    const env = new StubExecutionEnvironment();
+    const tool = createSpawnAgentTool(factory, agents, { currentDepth: 2, maxDepth: 2 });
+
+    const result = await tool.executor({ task: "fix the bug" }, env);
+    expect(result).toContain("Error");
+    expect(result).toContain("disabled at depth 2");
+    expect(agents.has("agent-1")).toBe(false);
+  });
+
+  test("depth below limit spawns normally", async () => {
+    const agents = new Map<string, SubAgentHandle>();
+    const { factory } = createMockFactory();
+    const env = new StubExecutionEnvironment();
+    const tool = createSpawnAgentTool(factory, agents, { currentDepth: 0, maxDepth: 2 });
+
+    const result = await tool.executor({ task: "fix the bug" }, env);
+    expect(result).toContain("agent-1");
+    expect(result).toContain("running");
+    expect(agents.has("agent-1")).toBe(true);
+  });
 });
 
 describe("send_input", () => {
