@@ -65,6 +65,20 @@ export async function retry<T>(
       const delay = computeDelay(attempt, policy, retryAfter);
 
       if (delay < 0) {
+        if (error instanceof ProviderError && retryAfter !== undefined) {
+          throw new ProviderError(
+            `${error.message} (Retry-After: ${retryAfter}s exceeds max delay of ${policy.maxDelay}s)`,
+            error.provider,
+            {
+              statusCode: error.statusCode,
+              errorCode: error.errorCode,
+              retryable: error.retryable,
+              retryAfter,
+              raw: error.raw,
+              cause: error,
+            },
+          );
+        }
         throw error;
       }
 

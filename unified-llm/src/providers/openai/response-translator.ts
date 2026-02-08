@@ -1,52 +1,10 @@
-import type { Response, Usage, RateLimitInfo } from "../../types/response.js";
+import type { Response, RateLimitInfo } from "../../types/response.js";
 import type { Message } from "../../types/message.js";
 import type { ContentPart } from "../../types/content-part.js";
 import { Role } from "../../types/role.js";
 import { str, num, rec, recArray } from "../../utils/extract.js";
 import { safeJsonParse } from "../../utils/json.js";
-
-function mapFinishReason(status: string): Response["finishReason"] {
-  switch (status) {
-    case "completed":
-      return { reason: "stop", raw: status };
-    case "incomplete":
-      return { reason: "length", raw: status };
-    case "failed":
-      return { reason: "error", raw: status };
-    case "content_filter":
-      return { reason: "content_filter", raw: status };
-    default:
-      return { reason: "other", raw: status };
-  }
-}
-
-function translateUsage(usageData: Record<string, unknown> | undefined): Usage {
-  if (!usageData) {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  }
-
-  const inputTokens = num(usageData["input_tokens"]);
-  const outputTokens = num(usageData["output_tokens"]);
-
-  const result: Usage = {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
-    raw: usageData,
-  };
-
-  const outputDetails = rec(usageData["output_tokens_details"]);
-  if (outputDetails && typeof outputDetails["reasoning_tokens"] === "number") {
-    result.reasoningTokens = outputDetails["reasoning_tokens"];
-  }
-
-  const inputDetails = rec(usageData["input_tokens_details"]);
-  if (inputDetails && typeof inputDetails["cached_tokens"] === "number") {
-    result.cacheReadTokens = inputDetails["cached_tokens"];
-  }
-
-  return result;
-}
+import { mapFinishReason, normalizeUsage } from "../../utils/normalize-response.js";
 
 export function translateResponse(
   body: Record<string, unknown>,
@@ -82,22 +40,42 @@ export function translateResponse(
 
   const hasToolCalls = contentParts.some((p) => p.kind === "tool_call");
   const status = str(body["status"]);
-  const finishReason = hasToolCalls
-    ? { reason: "tool_calls" as const, raw: status }
-    : mapFinishReason(status);
 
   const message: Message = {
     role: Role.ASSISTANT,
     content: contentParts,
   };
 
+  const usageData = rec(body["usage"]);
+  const inputTokens = usageData ? num(usageData["input_tokens"]) : 0;
+  const outputTokens = usageData ? num(usageData["output_tokens"]) : 0;
+
+  const outputDetails = rec(usageData?.["output_tokens_details"]);
+  const reasoningTokens = outputDetails && typeof outputDetails["reasoning_tokens"] === "number"
+    ? outputDetails["reasoning_tokens"]
+    : undefined;
+
+  const inputDetails = rec(usageData?.["input_tokens_details"]);
+  const cacheReadTokens = inputDetails && typeof inputDetails["cached_tokens"] === "number"
+    ? inputDetails["cached_tokens"]
+    : undefined;
+
+  const usage = normalizeUsage(inputTokens, outputTokens, {
+    reasoningTokens,
+    cacheReadTokens,
+    raw: usageData,
+  });
+
   const result: Response = {
     id: str(body["id"]),
     model: str(body["model"]),
     provider: "openai",
     message,
-    finishReason,
-    usage: translateUsage(rec(body["usage"])),
+    finishReason: {
+      reason: mapFinishReason(status, hasToolCalls, "openai"),
+      raw: status,
+    },
+    usage,
     raw: body,
     warnings: [],
   };

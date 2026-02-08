@@ -4,6 +4,7 @@ import type { ToolDefinition, ToolChoice } from "../../types/tool.js";
 import type { Message } from "../../types/message.js";
 import type { Warning } from "../../types/response.js";
 import { Role } from "../../types/role.js";
+import { encodeToBase64 } from "../../utils/schema-translate.js";
 
 interface TranslatedRequest {
   body: Record<string, unknown>;
@@ -28,11 +29,10 @@ function translateContentPart(
         };
       }
       if (part.image.data) {
-        const base64 = btoa(String.fromCharCode(...part.image.data));
         return {
           inlineData: {
             mimeType: part.image.mediaType ?? "image/png",
-            data: base64,
+            data: encodeToBase64(part.image.data),
           },
         };
       }
@@ -167,11 +167,10 @@ export function translateRequest(request: Request): TranslatedRequest {
         parts.push(translated);
       }
       if (part.kind === "tool_result" && part.toolResult.imageData) {
-        const base64 = btoa(String.fromCharCode(...part.toolResult.imageData));
         parts.push({
           inlineData: {
             mimeType: part.toolResult.imageMediaType ?? "image/png",
-            data: base64,
+            data: encodeToBase64(part.toolResult.imageData),
           },
         });
       }

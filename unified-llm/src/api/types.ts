@@ -38,4 +38,5 @@ export interface StreamResult {
   response(): Promise<Response>;
   readonly partialResponse: Response;
   readonly textStream: AsyncGenerator<string>;
+  readonly totalUsage: Usage;
 }

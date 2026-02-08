@@ -175,6 +175,14 @@ export class AnthropicAdapter implements ProviderAdapter {
     return mode === "auto" || mode === "none" || mode === "required" || mode === "named";
   }
 
+  async initialize(): Promise<void> {
+    // No initialization needed for HTTP-based adapter
+  }
+
+  async close(): Promise<void> {
+    // No cleanup needed for HTTP-based adapter
+  }
+
   private buildHeaders(
     extraHeaders: Record<string, string>,
     useCache: boolean,

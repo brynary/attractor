@@ -84,8 +84,11 @@ export async function httpRequest(
 ): Promise<HttpResponse> {
   const controller = new AbortController();
   const timeoutMs = options.timeout?.request ?? 120_000;
+  const connectTimeoutMs = options.timeout?.connect ?? 10_000;
 
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let connectTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let connectionEstablished = false;
 
   if (options.signal) {
     options.signal.addEventListener("abort", () => controller.abort(), {
@@ -104,7 +107,17 @@ export async function httpRequest(
       fetchOptions.body = JSON.stringify(options.body);
     }
 
+    connectTimeoutId = setTimeout(() => {
+      if (!connectionEstablished) {
+        controller.abort();
+      }
+    }, connectTimeoutMs);
+
     const response = await fetch(options.url, fetchOptions);
+    connectionEstablished = true;
+    if (connectTimeoutId !== undefined) {
+      clearTimeout(connectTimeoutId);
+    }
     const rateLimit = extractRateLimit(response.headers);
 
     if (!response.ok) {
@@ -148,6 +161,9 @@ export async function httpRequest(
       if (options.signal?.aborted) {
         throw new AbortError("Request was aborted");
       }
+      if (!connectionEstablished) {
+        throw new RequestTimeoutError(`Connection timed out after ${connectTimeoutMs}ms`);
+      }
       throw new RequestTimeoutError(`Request timed out after ${timeoutMs}ms`);
     }
     if (error instanceof TypeError) {
@@ -160,6 +176,9 @@ export async function httpRequest(
     );
   } finally {
     clearTimeout(timeoutId);
+    if (connectTimeoutId !== undefined) {
+      clearTimeout(connectTimeoutId);
+    }
   }
 }
 
@@ -168,8 +187,11 @@ export async function httpRequestStream(
 ): Promise<{ headers: Headers; body: ReadableStream<Uint8Array>; rateLimit?: RateLimitInfo }> {
   const controller = new AbortController();
   const timeoutMs = options.timeout?.request ?? 120_000;
+  const connectTimeoutMs = options.timeout?.connect ?? 10_000;
 
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let connectTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let connectionEstablished = false;
 
   if (options.signal) {
     options.signal.addEventListener("abort", () => controller.abort(), {
@@ -188,8 +210,18 @@ export async function httpRequestStream(
       fetchOptions.body = JSON.stringify(options.body);
     }
 
+    connectTimeoutId = setTimeout(() => {
+      if (!connectionEstablished) {
+        controller.abort();
+      }
+    }, connectTimeoutMs);
+
     const response = await fetch(options.url, fetchOptions);
+    connectionEstablished = true;
     clearTimeout(timeoutId);
+    if (connectTimeoutId !== undefined) {
+      clearTimeout(connectTimeoutId);
+    }
 
     const rateLimit = extractRateLimit(response.headers);
 
@@ -234,12 +266,18 @@ export async function httpRequestStream(
     return { headers: response.headers, body: wrappedBody, rateLimit };
   } catch (error) {
     clearTimeout(timeoutId);
+    if (connectTimeoutId !== undefined) {
+      clearTimeout(connectTimeoutId);
+    }
     if (error instanceof SDKError) {
       throw error;
     }
     if (error instanceof DOMException && error.name === "AbortError") {
       if (options.signal?.aborted) {
         throw new AbortError("Request was aborted");
+      }
+      if (!connectionEstablished) {
+        throw new RequestTimeoutError(`Connection timed out after ${connectTimeoutMs}ms`);
       }
       throw new RequestTimeoutError(`Request timed out after ${timeoutMs}ms`);
     }

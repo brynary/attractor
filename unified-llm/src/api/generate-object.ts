@@ -12,11 +12,15 @@ import { getDefaultClient } from "../client/default-client.js";
 
 export interface GenerateObjectOptions
   extends Omit<GenerateOptions, "responseFormat"> {
+  /** JSON schema for structured output */
   schema: Record<string, unknown>;
+  /** Schema name (defaults to "extract" for tool strategy) */
   schemaName?: string;
+  /** Schema description for the tool or model */
   schemaDescription?: string;
+  /** Strategy for structured output: "auto" (choose best), "tool" (use tool calling), or "json_schema" (use native JSON schema). Default: "auto" */
   strategy?: "auto" | "tool" | "json_schema";
-  /** Max schema-validation retries with feedback (default 2). */
+  /** Maximum schema-validation retries with feedback (default: 2) */
   maxValidationRetries?: number;
 }
 
@@ -37,7 +41,7 @@ export async function generateObject(
   const extractToolName = schemaName ?? "extract";
   const extractTool = {
     name: extractToolName,
-    description: schemaDescription ?? "Extract structured data",
+    description: options.schemaDescription ?? "Extract structured data",
     parameters: schema,
   };
 

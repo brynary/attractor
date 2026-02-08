@@ -28,27 +28,49 @@ function toAdapterTimeout(timeout: number | TimeoutConfig, remainingMs?: number)
 }
 
 export interface GenerateOptions {
+  /** Model identifier (e.g., "gpt-5.2", "claude-opus-4-6", "gemini-3-flash-preview") */
   model: string;
+  /** Single-turn text prompt (mutually exclusive with messages) */
   prompt?: string;
+  /** Multi-turn message history (mutually exclusive with prompt) */
   messages?: Message[];
+  /** System prompt prepended to messages */
   system?: string;
+  /** Tool definitions for function calling */
   tools?: ToolDefinition[];
+  /** Tool choice strategy (defaults to "auto" when tools are provided) */
   toolChoice?: ToolChoice;
+  /** Maximum automatic tool execution rounds (default: 1) */
   maxToolRounds?: number;
+  /** Condition to stop tool execution early */
   stopWhen?: StopCondition;
+  /** Structured output format */
   responseFormat?: ResponseFormat;
+  /** Sampling temperature (typically 0.0-1.0, defaults to provider's default) */
   temperature?: number;
+  /** Top-p nucleus sampling (typically 0.0-1.0, defaults to provider's default) */
   topP?: number;
+  /** Maximum output tokens (defaults to provider's default) */
   maxTokens?: number;
+  /** Stop sequences */
   stopSequences?: string[];
+  /** Reasoning effort level for reasoning models (e.g., "low", "medium", "high") */
   reasoningEffort?: string;
+  /** Provider name (defaults to client's default provider) */
   provider?: string;
+  /** Provider-specific options escape hatch */
   providerOptions?: Record<string, Record<string, unknown>>;
+  /** Maximum retry attempts for transient failures (default: 2) */
   maxRetries?: number;
+  /** Custom retry policy */
   retryPolicy?: RetryPolicy;
+  /** Timeout in milliseconds or detailed timeout config (default: 120s per step) */
   timeout?: number | TimeoutConfig;
+  /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Optional callback to repair invalid tool call arguments */
   repairToolCall?: (toolCall: ToolCall, error: Error) => Promise<Record<string, unknown>>;
+  /** Custom client instance (defaults to global default client) */
   client?: Client;
 }
 

@@ -13,17 +13,7 @@ import {
   isRedactedThinkingPart,
 } from "../../types/content-part.js";
 import { Role } from "../../types/role.js";
-
-function encodeImageToDataUri(
-  data: Uint8Array,
-  mediaType: string | undefined,
-): string {
-  const mime = mediaType ?? "image/png";
-  const base64 = btoa(
-    Array.from(data, (byte) => String.fromCharCode(byte)).join(""),
-  );
-  return `data:${mime};base64,${base64}`;
-}
+import { encodeImageToDataUri, enforceStrictSchema } from "../../utils/schema-translate.js";
 
 interface TranslatePartResult {
   translated: Record<string, unknown> | undefined;
@@ -148,61 +138,6 @@ function translateMessage(message: Message, warnings: Warning[]): Array<Record<s
   return items;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function enforceStrictSchema(
-  schema: Record<string, unknown>,
-): Record<string, unknown> {
-  const result = { ...schema };
-  result.additionalProperties = false;
-
-  const props = result.properties;
-  if (isRecord(props)) {
-    const allKeys = Object.keys(props);
-    const existing = Array.isArray(result.required)
-      ? result.required.filter((v): v is string => typeof v === "string")
-      : [];
-    const existingSet = new Set(existing);
-    const missing = allKeys.filter((k) => !existingSet.has(k));
-
-    const newProps: Record<string, unknown> = {};
-    for (const key of allKeys) {
-      const prop = props[key];
-      if (isRecord(prop)) {
-        // Recursively enforce strict schema on nested object properties
-        const enforced = isRecord(prop.properties)
-          ? enforceStrictSchema({ ...prop })
-          : { ...prop };
-
-        // Recurse into array items that are objects
-        if (isRecord(enforced.items) && isRecord(enforced.items.properties)) {
-          enforced.items = enforceStrictSchema({ ...enforced.items });
-        }
-
-        if (missing.includes(key)) {
-          const propType = enforced.type;
-          enforced.type = Array.isArray(propType)
-            ? propType
-            : [String(propType), "null"];
-        }
-        newProps[key] = enforced;
-      } else {
-        newProps[key] = prop;
-      }
-    }
-    result.properties = newProps;
-    result.required = allKeys;
-  }
-
-  // Also recurse into top-level items (for array schemas)
-  if (isRecord(result.items) && isRecord(result.items.properties)) {
-    result.items = enforceStrictSchema({ ...result.items });
-  }
-
-  return result;
-}
 
 function translateToolChoice(
   toolChoice: Request["toolChoice"],
@@ -261,14 +196,35 @@ export function translateRequest(
 
   // Tools — OpenAI strict mode requires additionalProperties: false
   // and all properties listed in required (recursively for nested objects)
+  const tools: Array<Record<string, unknown>> = [];
+
   if (request.tools && request.tools.length > 0) {
-    body.tools = request.tools.map((tool) => ({
-      type: "function",
-      name: tool.name,
-      description: tool.description,
-      parameters: enforceStrictSchema({ ...tool.parameters }),
-      strict: true,
-    }));
+    for (const tool of request.tools) {
+      tools.push({
+        type: "function",
+        name: tool.name,
+        description: tool.description,
+        parameters: enforceStrictSchema({ ...tool.parameters }),
+        strict: true,
+      });
+    }
+  }
+
+  // Append built-in tools from providerOptions
+  const openaiOptions = request.providerOptions?.["openai"];
+  const builtinTools = openaiOptions?.["builtin_tools"];
+  if (builtinTools && Array.isArray(builtinTools)) {
+    for (const builtinTool of builtinTools) {
+      if (typeof builtinTool === "string") {
+        tools.push({ type: builtinTool });
+      } else if (typeof builtinTool === "object" && builtinTool !== null) {
+        tools.push(builtinTool as Record<string, unknown>);
+      }
+    }
+  }
+
+  if (tools.length > 0) {
+    body.tools = tools;
   }
 
   // Tool choice
@@ -320,11 +276,12 @@ export function translateRequest(
     }
   }
 
-  // Merge providerOptions.openai
-  const openaiOptions = request.providerOptions?.["openai"];
+  // Merge providerOptions.openai (skip builtin_tools since it was already processed)
   if (openaiOptions) {
     for (const [key, value] of Object.entries(openaiOptions)) {
-      body[key] = value;
+      if (key !== "builtin_tools") {
+        body[key] = value;
+      }
     }
   }
 

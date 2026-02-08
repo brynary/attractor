@@ -222,4 +222,12 @@ export class OpenAIAdapter implements ProviderAdapter {
   supportsToolChoice(mode: string): boolean {
     return ["auto", "none", "required", "named"].includes(mode);
   }
+
+  async initialize(): Promise<void> {
+    // No initialization needed for HTTP-based adapter
+  }
+
+  async close(): Promise<void> {
+    // No cleanup needed for HTTP-based adapter
+  }
 }

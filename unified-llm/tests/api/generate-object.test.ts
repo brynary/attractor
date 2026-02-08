@@ -475,4 +475,33 @@ describe("generateObject retry-with-feedback (Gap 1)", () => {
     // 1 initial + 4 retries = 5 calls
     expect(adapter.calls.length).toBe(5);
   });
+
+  test("timeout config passed to adapter", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeToolCallResponse("extract", { name: "Alice" }),
+      },
+    ]);
+    const client = new Client({
+      providers: { stub: adapter },
+      defaultProvider: "stub",
+    });
+
+    await generateObject({
+      model: "test-model",
+      prompt: "Extract",
+      schema: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+      timeout: 15000,
+      client,
+    });
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.timeout).toBeDefined();
+    expect(adapter.calls[0]?.timeout?.request).toBe(15000);
+    expect(adapter.calls[0]?.timeout?.connect).toBe(10_000);
+  });
 });

@@ -1,25 +1,9 @@
-import type { Response, Usage, RateLimitInfo } from "../../types/response.js";
+import type { Response, RateLimitInfo } from "../../types/response.js";
 import type { ContentPart } from "../../types/content-part.js";
 import type { Message } from "../../types/message.js";
 import { Role } from "../../types/role.js";
 import { str, num, optNum, rec, recArray } from "../../utils/extract.js";
-
-function translateFinishReason(
-  rawReason: string,
-  hasToolCalls: boolean,
-): "stop" | "length" | "tool_calls" | "content_filter" | "error" | "other" {
-  switch (rawReason) {
-    case "STOP":
-      return hasToolCalls ? "tool_calls" : "stop";
-    case "MAX_TOKENS":
-      return "length";
-    case "SAFETY":
-    case "RECITATION":
-      return "content_filter";
-    default:
-      return hasToolCalls ? "tool_calls" : "other";
-  }
-}
+import { mapFinishReason, normalizeUsage } from "../../utils/normalize-response.js";
 
 function translatePart(
   part: Record<string, unknown>,
@@ -89,15 +73,15 @@ export function translateResponse(
   const outputTokens = num(usageData?.["candidatesTokenCount"]);
   const reasoningTokens = optNum(usageData?.["thoughtsTokenCount"]);
   const cacheReadTokens = optNum(usageData?.["cachedContentTokenCount"]);
+  // Gemini does not provide cache write tokens in generateContent responses
+  const cacheWriteTokens = undefined;
 
-  const usage: Usage = {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
+  const usage = normalizeUsage(inputTokens, outputTokens, {
     reasoningTokens,
     cacheReadTokens,
+    cacheWriteTokens,
     raw: usageData,
-  };
+  });
 
   const message: Message = {
     role: Role.ASSISTANT,
@@ -110,7 +94,7 @@ export function translateResponse(
     provider: "gemini",
     message,
     finishReason: {
-      reason: translateFinishReason(rawFinishReason, hasToolCalls),
+      reason: mapFinishReason(rawFinishReason, hasToolCalls, "gemini"),
       raw: rawFinishReason,
     },
     usage,

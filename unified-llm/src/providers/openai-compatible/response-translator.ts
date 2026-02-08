@@ -1,58 +1,10 @@
-import type { Response, Usage, RateLimitInfo } from "../../types/response.js";
+import type { Response, RateLimitInfo } from "../../types/response.js";
 import type { Message } from "../../types/message.js";
 import type { ContentPart } from "../../types/content-part.js";
 import { Role } from "../../types/role.js";
 import { str, num, rec, recArray } from "../../utils/extract.js";
 import { safeJsonParse } from "../../utils/json.js";
-
-function mapFinishReason(reason: string): Response["finishReason"] {
-  switch (reason) {
-    case "stop":
-      return { reason: "stop", raw: reason };
-    case "length":
-      return { reason: "length", raw: reason };
-    case "tool_calls":
-      return { reason: "tool_calls", raw: reason };
-    case "content_filter":
-      return { reason: "content_filter", raw: reason };
-    default:
-      return { reason: "other", raw: reason };
-  }
-}
-
-function translateUsage(
-  usageData: Record<string, unknown> | undefined,
-): Usage {
-  if (!usageData) {
-    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-  }
-
-  const inputTokens = num(usageData["prompt_tokens"]);
-  const outputTokens = num(usageData["completion_tokens"]);
-  const totalFromApi = num(usageData["total_tokens"]);
-
-  const result: Usage = {
-    inputTokens,
-    outputTokens,
-    totalTokens: totalFromApi > 0 ? totalFromApi : inputTokens + outputTokens,
-    raw: usageData,
-  };
-
-  const completionDetails = rec(usageData["completion_tokens_details"]);
-  if (
-    completionDetails &&
-    typeof completionDetails["reasoning_tokens"] === "number"
-  ) {
-    result.reasoningTokens = completionDetails["reasoning_tokens"];
-  }
-
-  const promptDetails = rec(usageData["prompt_tokens_details"]);
-  if (promptDetails && typeof promptDetails["cached_tokens"] === "number") {
-    result.cacheReadTokens = promptDetails["cached_tokens"];
-  }
-
-  return result;
-}
+import { mapFinishReason, normalizeUsage } from "../../utils/normalize-response.js";
 
 export function translateResponse(
   body: Record<string, unknown>,
@@ -93,20 +45,43 @@ export function translateResponse(
   }
 
   const rawFinishReason = str(firstChoice?.["finish_reason"]);
-  const finishReason = mapFinishReason(rawFinishReason);
+  const hasToolCalls = contentParts.some((p) => p.kind === "tool_call");
 
   const message: Message = {
     role: Role.ASSISTANT,
     content: contentParts,
   };
 
+  const usageData = rec(body["usage"]);
+  const inputTokens = usageData ? num(usageData["prompt_tokens"]) : 0;
+  const outputTokens = usageData ? num(usageData["completion_tokens"]) : 0;
+
+  const completionDetails = rec(usageData?.["completion_tokens_details"]);
+  const reasoningTokens = completionDetails && typeof completionDetails["reasoning_tokens"] === "number"
+    ? completionDetails["reasoning_tokens"]
+    : undefined;
+
+  const promptDetails = rec(usageData?.["prompt_tokens_details"]);
+  const cacheReadTokens = promptDetails && typeof promptDetails["cached_tokens"] === "number"
+    ? promptDetails["cached_tokens"]
+    : undefined;
+
+  const usage = normalizeUsage(inputTokens, outputTokens, {
+    reasoningTokens,
+    cacheReadTokens,
+    raw: usageData,
+  });
+
   const result: Response = {
     id: str(body["id"]),
     model: str(body["model"]),
     provider: "openai-compatible",
     message,
-    finishReason,
-    usage: translateUsage(rec(body["usage"])),
+    finishReason: {
+      reason: mapFinishReason(rawFinishReason, hasToolCalls, "openai_compatible"),
+      raw: rawFinishReason,
+    },
+    usage,
     raw: body,
     warnings: [],
   };

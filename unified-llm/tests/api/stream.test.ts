@@ -487,4 +487,49 @@ describe("stream", () => {
       }
     }).toThrow(RequestTimeoutError);
   });
+
+  test("timeout config passed to adapter", async () => {
+    const adapter = new StubAdapter("stub", [
+      { events: makeStreamEvents("ok") },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "test",
+      timeout: 15000,
+      client,
+    });
+
+    for await (const _event of result) {
+      // consume
+    }
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.timeout).toBeDefined();
+    expect(adapter.calls[0]?.timeout?.request).toBe(15000);
+    expect(adapter.calls[0]?.timeout?.connect).toBe(10_000);
+  });
+
+  test("timeout with per-step config passed to adapter", async () => {
+    const adapter = new StubAdapter("stub", [
+      { events: makeStreamEvents("ok") },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "test",
+      timeout: { perStep: 20000 },
+      client,
+    });
+
+    for await (const _event of result) {
+      // consume
+    }
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.timeout).toBeDefined();
+    expect(adapter.calls[0]?.timeout?.request).toBe(20000);
+  });
 });

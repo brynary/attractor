@@ -23,6 +23,15 @@ export interface Usage {
   raw?: Record<string, unknown>;
 }
 
+export namespace Usage {
+  /**
+   * Add two Usage objects together, summing all token counts.
+   */
+  export function add(a: Usage, b: Usage): Usage {
+    return addUsage(a, b);
+  }
+}
+
 export interface Warning {
   message: string;
   code?: string;
@@ -46,6 +55,29 @@ export interface Response {
   raw?: Record<string, unknown>;
   warnings: Warning[];
   rateLimit?: RateLimitInfo;
+}
+
+export namespace Response {
+  /**
+   * Extract all text content from a response message.
+   */
+  export function text(response: Response): string {
+    return responseText(response);
+  }
+
+  /**
+   * Extract all tool calls from a response message.
+   */
+  export function toolCalls(response: Response): ToolCallData[] {
+    return responseToolCalls(response);
+  }
+
+  /**
+   * Extract reasoning/thinking content from a response message.
+   */
+  export function reasoning(response: Response): string | undefined {
+    return responseReasoning(response);
+  }
 }
 
 export function addUsage(a: Usage, b: Usage): Usage {

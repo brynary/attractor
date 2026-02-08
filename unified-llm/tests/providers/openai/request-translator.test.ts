@@ -683,4 +683,106 @@ describe("OpenAI Request Translator", () => {
     expect(warnings[0]?.code).toBe("unsupported_part");
     expect(warnings[0]?.message).toContain("Document");
   });
+
+  test("appends built-in tools from providerOptions", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Hi" }] }],
+      tools: [
+        {
+          name: "get_weather",
+          description: "Get weather",
+          parameters: { type: "object", properties: { city: { type: "string" } } },
+        },
+      ],
+      providerOptions: {
+        openai: {
+          builtin_tools: ["web_search_preview", "file_search"],
+        },
+      },
+    });
+
+    const { body } = translateRequest(request, false);
+    const tools = body.tools as Array<Record<string, unknown>>;
+
+    expect(tools).toHaveLength(3);
+    expect(tools[0]?.type).toBe("function");
+    expect(tools[0]?.name).toBe("get_weather");
+    expect(tools[1]).toEqual({ type: "web_search_preview" });
+    expect(tools[2]).toEqual({ type: "file_search" });
+  });
+
+  test("handles built-in tools without regular tools", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Search the web" }] }],
+      providerOptions: {
+        openai: {
+          builtin_tools: ["web_search_preview"],
+        },
+      },
+    });
+
+    const { body } = translateRequest(request, false);
+    const tools = body.tools as Array<Record<string, unknown>>;
+
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toEqual({ type: "web_search_preview" });
+  });
+
+  test("handles built-in tools with object configuration", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Interpret code" }] }],
+      providerOptions: {
+        openai: {
+          builtin_tools: [
+            "code_interpreter",
+            { type: "file_search", file_ids: ["file-abc123"] },
+          ],
+        },
+      },
+    });
+
+    const { body } = translateRequest(request, false);
+    const tools = body.tools as Array<Record<string, unknown>>;
+
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toEqual({ type: "code_interpreter" });
+    expect(tools[1]).toEqual({ type: "file_search", file_ids: ["file-abc123"] });
+  });
+
+  test("ignores non-array builtin_tools", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Hi" }] }],
+      providerOptions: {
+        openai: {
+          builtin_tools: "web_search_preview",
+        },
+      },
+    });
+
+    const { body } = translateRequest(request, false);
+    expect(body.tools).toBeUndefined();
+  });
+
+  test("filters out builtin_tools from merged providerOptions", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Hi" }] }],
+      providerOptions: {
+        openai: {
+          builtin_tools: ["web_search_preview"],
+          store: true,
+          user: "user-123",
+        },
+      },
+    });
+
+    const { body } = translateRequest(request, false);
+
+    expect(body.store).toBe(true);
+    expect(body.user).toBe("user-123");
+    expect(body.builtin_tools).toBeUndefined();
+
+    const tools = body.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toEqual({ type: "web_search_preview" });
+  });
 });

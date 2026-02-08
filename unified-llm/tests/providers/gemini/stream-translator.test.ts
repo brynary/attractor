@@ -184,6 +184,7 @@ describe("Gemini stream translator", () => {
       expect(finish.usage?.totalTokens).toBe(52);
       expect(finish.usage?.reasoningTokens).toBe(100);
       expect(finish.usage?.cacheReadTokens).toBe(30);
+      expect(finish.usage?.cacheWriteTokens).toBeUndefined();
     }
   });
 

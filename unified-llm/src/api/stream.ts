@@ -2,8 +2,8 @@ import type { Message } from "../types/message.js";
 import { systemMessage, userMessage, toolResultMessage } from "../types/message.js";
 import type { StreamEvent } from "../types/stream-event.js";
 import { StreamEventType } from "../types/stream-event.js";
-import type { Response } from "../types/response.js";
-import { responseToolCalls, responseText, responseReasoning } from "../types/response.js";
+import type { Response, Usage } from "../types/response.js";
+import { responseToolCalls, responseText, responseReasoning, addUsage } from "../types/response.js";
 import type { AdapterTimeout } from "../types/timeout.js";
 import type { TimeoutConfig } from "../types/timeout.js";
 import { StreamAccumulator } from "../utils/stream-accumulator.js";
@@ -29,6 +29,12 @@ function toAdapterTimeout(timeout: number | TimeoutConfig, remainingMs?: number)
 
 export type StreamOptions = GenerateOptions;
 
+const zeroUsage: Usage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+};
+
 class StreamResultImpl implements StreamResult {
   private events: StreamEvent[] = [];
   private responsePromise: Promise<Response>;
@@ -36,10 +42,12 @@ class StreamResultImpl implements StreamResult {
   private iterationStarted = false;
   private generatorFn: () => AsyncGenerator<StreamEvent>;
   private accumulator: StreamAccumulator;
+  private _totalUsage: Usage;
 
-  constructor(generatorFn: () => AsyncGenerator<StreamEvent>, provider: string) {
+  constructor(generatorFn: () => AsyncGenerator<StreamEvent>, provider: string, totalUsageRef: { current: Usage }) {
     this.generatorFn = generatorFn;
     this.accumulator = new StreamAccumulator(provider);
+    this._totalUsage = totalUsageRef.current;
     this.responsePromise = new Promise<Response>((resolve) => {
       this.resolveResponse = resolve;
     });
@@ -112,6 +120,10 @@ class StreamResultImpl implements StreamResult {
     }
     return gen();
   }
+
+  get totalUsage(): Usage {
+    return this._totalUsage;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -175,6 +187,8 @@ export function stream(options: StreamOptions): StreamResult {
     backoffMultiplier: 2.0,
     jitter: true,
   };
+
+  const totalUsageRef = { current: { ...zeroUsage } };
 
   const generatorFn = async function* (): AsyncGenerator<StreamEvent> {
     const messages: Message[] = [];
@@ -262,6 +276,7 @@ export function stream(options: StreamOptions): StreamResult {
       }
 
       const response = accumulator.response();
+      totalUsageRef.current = addUsage(totalUsageRef.current, response.usage);
       const rawToolCalls = responseToolCalls(response);
       const hasToolCalls =
         response.finishReason.reason === "tool_calls" &&
@@ -436,5 +451,5 @@ export function stream(options: StreamOptions): StreamResult {
     }
   };
 
-  return new StreamResultImpl(generatorFn, options.provider ?? "");
+  return new StreamResultImpl(generatorFn, options.provider ?? "", totalUsageRef);
 }

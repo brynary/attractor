@@ -3,22 +3,7 @@ import type { ContentPart } from "../../types/content-part.js";
 import type { Message } from "../../types/message.js";
 import { Role } from "../../types/role.js";
 import { str, num, optNum, optStr, rec, recArray, recOrEmpty } from "../../utils/extract.js";
-
-function translateFinishReason(
-  stopReason: string,
-): "stop" | "length" | "tool_calls" | "content_filter" | "error" | "other" {
-  switch (stopReason) {
-    case "end_turn":
-    case "stop_sequence":
-      return "stop";
-    case "max_tokens":
-      return "length";
-    case "tool_use":
-      return "tool_calls";
-    default:
-      return "other";
-  }
-}
+import { mapFinishReason, normalizeUsage, estimateReasoningTokens } from "../../utils/normalize-response.js";
 
 function translateContentBlock(block: Record<string, unknown>): ContentPart | undefined {
   switch (block["type"]) {
@@ -71,10 +56,10 @@ export function translateResponse(
     }
   }
 
-  let reasoningWordCount = 0;
+  let totalReasoningTokens = 0;
   for (const part of parts) {
     if (part.kind === "thinking") {
-      reasoningWordCount += part.thinking.text.split(/\s+/).filter(Boolean).length;
+      totalReasoningTokens += estimateReasoningTokens(part.thinking.text);
     }
   }
 
@@ -85,20 +70,19 @@ export function translateResponse(
   const cacheReadTokens = optNum(usageData?.["cache_read_input_tokens"]);
   const cacheWriteTokens = optNum(usageData?.["cache_creation_input_tokens"]);
 
-  const usage: Usage = {
-    inputTokens,
-    outputTokens,
-    totalTokens: inputTokens + outputTokens,
-    reasoningTokens: reasoningWordCount > 0 ? Math.ceil(reasoningWordCount * 1.3) : undefined,
+  const usage = normalizeUsage(inputTokens, outputTokens, {
+    reasoningTokens: totalReasoningTokens > 0 ? totalReasoningTokens : undefined,
     cacheReadTokens,
     cacheWriteTokens,
     raw: usageData,
-  };
+  });
 
   const message: Message = {
     role: Role.ASSISTANT,
     content: parts,
   };
+
+  const hasToolCalls = parts.some((p) => p.kind === "tool_call");
 
   return {
     id: str(body["id"]),
@@ -106,7 +90,7 @@ export function translateResponse(
     provider: "anthropic",
     message,
     finishReason: {
-      reason: translateFinishReason(stopReason),
+      reason: mapFinishReason(stopReason, hasToolCalls, "anthropic"),
       raw: stopReason,
     },
     usage,

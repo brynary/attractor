@@ -301,4 +301,61 @@ describe("Client", () => {
     expect(closedNames).toContain("a");
     expect(closedNames).toContain("b");
   });
+
+  test("complete passes timeout through to adapter", async () => {
+    const adapter = new StubAdapter("test", [
+      { response: makeResponse("ok") },
+    ]);
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+    });
+
+    await client.complete({
+      ...makeRequest(),
+      timeout: { connect: 5000, request: 30000, streamRead: 20000 },
+    });
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.timeout).toEqual({
+      connect: 5000,
+      request: 30000,
+      streamRead: 20000,
+    });
+  });
+
+  test("stream passes timeout through to adapter", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.TEXT_DELTA, delta: "hi" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+    });
+
+    const gen = client.stream({
+      ...makeRequest(),
+      timeout: { connect: 5000, request: 30000, streamRead: 20000 },
+    });
+
+    const events = [];
+    for await (const event of gen) {
+      events.push(event);
+    }
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.timeout).toEqual({
+      connect: 5000,
+      request: 30000,
+      streamRead: 20000,
+    });
+  });
 });

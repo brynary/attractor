@@ -12,6 +12,7 @@ export async function* translateStream(
   let outputTokens = 0;
   let reasoningTokens: number | undefined;
   let cacheReadTokens: number | undefined;
+  let cacheWriteTokens: number | undefined;
   let rawUsage: Record<string, unknown> | undefined;
   let finishReason = "STOP";
   let yieldedStart = false;
@@ -112,6 +113,8 @@ export async function* translateStream(
       outputTokens = num(usageData["candidatesTokenCount"]);
       reasoningTokens = optNum(usageData["thoughtsTokenCount"]);
       cacheReadTokens = optNum(usageData["cachedContentTokenCount"]);
+      // Gemini does not provide cache write tokens in generateContent responses
+      cacheWriteTokens = undefined;
       rawUsage = usageData;
     }
   }
@@ -127,6 +130,7 @@ export async function* translateStream(
     totalTokens: inputTokens + outputTokens,
     reasoningTokens,
     cacheReadTokens,
+    cacheWriteTokens,
     raw: rawUsage,
   };
 

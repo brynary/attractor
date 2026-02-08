@@ -9,17 +9,7 @@ import {
   isToolResultPart,
 } from "../../types/content-part.js";
 import { Role } from "../../types/role.js";
-
-function encodeImageToDataUri(
-  data: Uint8Array,
-  mediaType: string | undefined,
-): string {
-  const mime = mediaType ?? "image/png";
-  const base64 = btoa(
-    Array.from(data, (byte) => String.fromCharCode(byte)).join(""),
-  );
-  return `data:${mime};base64,${base64}`;
-}
+import { encodeImageToDataUri } from "../../utils/schema-translate.js";
 
 function translateContentPart(
   part: ContentPart,

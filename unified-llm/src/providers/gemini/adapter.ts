@@ -24,6 +24,7 @@ import { translateRequest } from "./request-translator.js";
 import { resolveFileImages } from "../../utils/resolve-file-images.js";
 import { translateResponse } from "./response-translator.js";
 import { translateStream } from "./stream-translator.js";
+import { mapGrpcStatusToError } from "../../utils/grpc-errors.js";
 
 export interface GeminiAdapterOptions {
   apiKey: string;
@@ -33,37 +34,6 @@ export interface GeminiAdapterOptions {
 }
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
-
-function mapGrpcStatus(
-  grpcStatus: string,
-  message: string,
-  provider: string,
-  status: number,
-  body: unknown,
-  headers: Headers,
-): SDKError | undefined {
-  switch (grpcStatus) {
-    case "NOT_FOUND":
-      return new NotFoundError(message, provider, grpcStatus, body);
-    case "INVALID_ARGUMENT":
-      return new InvalidRequestError(message, provider, grpcStatus, body);
-    case "UNAUTHENTICATED":
-      return new AuthenticationError(message, provider, grpcStatus, body);
-    case "PERMISSION_DENIED":
-      return new AccessDeniedError(message, provider, grpcStatus, body);
-    case "RESOURCE_EXHAUSTED": {
-      const retryAfter = parseRetryAfterHeader(headers);
-      return new RateLimitError(message, provider, grpcStatus, retryAfter, body);
-    }
-    case "UNAVAILABLE":
-    case "INTERNAL":
-      return new ServerError(message, provider, grpcStatus, status, body);
-    case "DEADLINE_EXCEEDED":
-      return new RequestTimeoutError(message);
-    default:
-      return undefined;
-  }
-}
 
 function mapError(
   status: number,
@@ -118,7 +88,7 @@ function mapError(
   }
 
   if (errorCode) {
-    const grpcMapped = mapGrpcStatus(errorCode, message, provider, status, body, headers);
+    const grpcMapped = mapGrpcStatusToError(errorCode, message, provider, status, body, headers);
     if (grpcMapped) {
       return grpcMapped;
     }
@@ -210,6 +180,14 @@ export class GeminiAdapter implements ProviderAdapter {
       mode === "required" ||
       mode === "named"
     );
+  }
+
+  async initialize(): Promise<void> {
+    // No initialization needed for HTTP-based adapter
+  }
+
+  async close(): Promise<void> {
+    // No cleanup needed for HTTP-based adapter
   }
 
   private buildHeaders(): Record<string, string> {

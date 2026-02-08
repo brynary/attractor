@@ -1,20 +1,31 @@
 export interface ImageData {
+  /** URL or local file path (e.g., "https://example.com/image.png" or "./photo.jpg"). File paths are automatically read and converted to base64. */
   url?: string;
+  /** Raw image bytes */
   data?: Uint8Array;
+  /** MIME type (e.g., "image/png", "image/jpeg") */
   mediaType?: string;
+  /** Detail level for vision models (e.g., "auto", "low", "high") */
   detail?: string;
 }
 
 export interface AudioData {
+  /** URL or local file path (e.g., "https://example.com/audio.mp3" or "./recording.wav"). File paths are automatically read and converted to base64. */
   url?: string;
+  /** Raw audio bytes */
   data?: Uint8Array;
+  /** MIME type (e.g., "audio/mpeg", "audio/wav") */
   mediaType?: string;
 }
 
 export interface DocumentData {
+  /** URL or local file path (e.g., "https://example.com/doc.pdf" or "./report.pdf"). File paths are automatically read and converted to base64. */
   url?: string;
+  /** Raw document bytes */
   data?: Uint8Array;
+  /** MIME type (e.g., "application/pdf") */
   mediaType?: string;
+  /** File name for the document */
   fileName?: string;
 }
 

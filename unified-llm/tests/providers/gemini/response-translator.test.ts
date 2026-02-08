@@ -207,6 +207,7 @@ describe("Gemini response translator", () => {
     expect(response.usage.totalTokens).toBe(150);
     expect(response.usage.reasoningTokens).toBe(200);
     expect(response.usage.cacheReadTokens).toBe(80);
+    expect(response.usage.cacheWriteTokens).toBeUndefined();
   });
 
   test("translates thinking blocks", () => {
