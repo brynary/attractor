@@ -5,21 +5,29 @@ import { safeJsonParse } from "../utils/json.js";
 import { generate } from "./generate.js";
 import type { GenerateOptions } from "./generate.js";
 import type { GenerateResult } from "./types.js";
+import type { Client } from "../client/client.js";
+import { getDefaultClient } from "../client/default-client.js";
 
 export interface GenerateObjectOptions
   extends Omit<GenerateOptions, "responseFormat"> {
   schema: Record<string, unknown>;
   schemaName?: string;
   schemaDescription?: string;
+  strategy?: "auto" | "tool" | "json_schema";
 }
 
 export async function generateObject(
   options: GenerateObjectOptions,
 ): Promise<GenerateResult> {
-  const { schema, schemaName, schemaDescription, ...generateOpts } = options;
+  const { schema, schemaName, schemaDescription, strategy: explicitStrategy, ...generateOpts } = options;
 
-  // Use tool extraction strategy:
-  // Define a tool with the schema, force tool use, extract arguments as output
+  const strategy = resolveStrategy(explicitStrategy ?? "auto", options.client ?? getDefaultClient(), options.provider);
+
+  if (strategy === "json_schema") {
+    return generateObjectWithJsonSchema({ schema, schemaName, schemaDescription, ...generateOpts });
+  }
+
+  // Use tool extraction strategy
   const extractToolName = schemaName ?? "extract";
   const extractTool = {
     name: extractToolName,
@@ -36,10 +44,9 @@ export async function generateObject(
     ...generateOpts,
     tools: [extractTool],
     toolChoice,
-    maxToolRounds: 0, // Don't execute tools, just extract the call
+    maxToolRounds: 0,
   });
 
-  // Find the tool call with matching name
   const toolCall = result.toolCalls.find((tc) => tc.name === extractToolName);
   if (!toolCall) {
     throw new NoObjectGeneratedError(
@@ -53,10 +60,29 @@ export async function generateObject(
   };
 }
 
+function resolveStrategy(
+  strategy: "auto" | "tool" | "json_schema",
+  client: Client,
+  provider?: string,
+): "tool" | "json_schema" {
+  if (strategy !== "auto") {
+    return strategy;
+  }
+  try {
+    const adapter = client.resolveProvider(provider);
+    if (adapter.supportsNativeJsonSchema) {
+      return "json_schema";
+    }
+  } catch {
+    // If provider resolution fails, fall back to tool
+  }
+  return "tool";
+}
+
 export async function generateObjectWithJsonSchema(
   options: GenerateObjectOptions,
 ): Promise<GenerateResult> {
-  const { schema, schemaName, schemaDescription, ...generateOpts } = options;
+  const { schema, schemaName, schemaDescription, strategy: _strategy, ...generateOpts } = options;
 
   const result = await generate({
     ...generateOpts,

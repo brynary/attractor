@@ -159,6 +159,43 @@ describe("Client", () => {
     });
   });
 
+  test("initialize calls initialize on all adapters", async () => {
+    const initNames: string[] = [];
+
+    const adapterA: ProviderAdapter = {
+      name: "a",
+      complete: async () => makeResponse("a"),
+      stream: async function* () {},
+      initialize: async () => { initNames.push("a"); },
+    };
+
+    const adapterB: ProviderAdapter = {
+      name: "b",
+      complete: async () => makeResponse("b"),
+      stream: async function* () {},
+      initialize: async () => { initNames.push("b"); },
+    };
+
+    const client = new Client({
+      providers: { a: adapterA, b: adapterB },
+    });
+
+    await client.initialize();
+    expect(initNames).toContain("a");
+    expect(initNames).toContain("b");
+  });
+
+  test("resolveProvider returns the correct adapter", () => {
+    const adapter = new StubAdapter("my-provider", []);
+    const client = new Client({
+      providers: { "my-provider": adapter },
+      defaultProvider: "my-provider",
+    });
+
+    const resolved = client.resolveProvider("my-provider");
+    expect(resolved.name).toBe("my-provider");
+  });
+
   test("close calls close on all adapters", async () => {
     const closedNames: string[] = [];
 

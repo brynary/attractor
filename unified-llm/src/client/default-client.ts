@@ -4,7 +4,7 @@ let defaultClient: Client | undefined;
 
 export function getDefaultClient(): Client {
   if (!defaultClient) {
-    defaultClient = Client.fromEnv();
+    defaultClient = Client.fromEnvSync();
   }
   return defaultClient;
 }

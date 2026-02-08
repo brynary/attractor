@@ -6,18 +6,20 @@ import type { Request } from "../types/request.js";
 import type { Response, Usage } from "../types/response.js";
 import { addUsage, responseText, responseToolCalls, responseReasoning } from "../types/response.js";
 import type { TimeoutConfig, AdapterTimeout } from "../types/timeout.js";
-import { ConfigurationError } from "../types/errors.js";
+import { ConfigurationError, RequestTimeoutError } from "../types/errors.js";
 import { retry } from "../utils/retry.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
 import type { StepResult, GenerateResult, StopCondition } from "./types.js";
 
-function toAdapterTimeout(timeout: number | TimeoutConfig): AdapterTimeout {
+function toAdapterTimeout(timeout: number | TimeoutConfig, remainingMs?: number): AdapterTimeout {
   if (typeof timeout === "number") {
-    return { connect: timeout, request: timeout, streamRead: timeout };
+    const ms = remainingMs != null ? Math.min(timeout, remainingMs) : timeout;
+    return { connect: ms, request: ms, streamRead: ms };
   }
   const ms = timeout.perStep ?? timeout.total ?? 120_000;
-  return { connect: ms, request: ms, streamRead: ms };
+  const clamped = remainingMs != null ? Math.min(ms, remainingMs) : ms;
+  return { connect: clamped, request: clamped, streamRead: clamped };
 }
 
 export interface GenerateOptions {
@@ -102,7 +104,21 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   let totalUsage: Usage = { ...zeroUsage };
   let lastResponse: Response | undefined;
 
+  const timeoutCfg = typeof options.timeout === "number"
+    ? { total: options.timeout } : options.timeout;
+  const totalMs = timeoutCfg?.total;
+  const startTime = totalMs != null ? Date.now() : 0;
+
   for (let round = 0; round <= maxToolRounds; round++) {
+    let remainingMs: number | undefined;
+    if (totalMs != null) {
+      remainingMs = totalMs - (Date.now() - startTime);
+      if (remainingMs <= 0) {
+        throw new RequestTimeoutError(
+          `Total timeout of ${totalMs}ms exceeded`,
+        );
+      }
+    }
     const request: Request = {
       model: options.model,
       messages: [...messages],
@@ -116,7 +132,7 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
       stopSequences: options.stopSequences,
       reasoningEffort: options.reasoningEffort,
       providerOptions: options.providerOptions,
-      timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout) : undefined,
+      timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout, remainingMs) : undefined,
       abortSignal: options.abortSignal,
     };
 

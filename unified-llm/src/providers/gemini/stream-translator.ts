@@ -14,6 +14,7 @@ export async function* translateStream(
   let cacheReadTokens: number | undefined;
   let finishReason = "STOP";
   let yieldedStart = false;
+  let emittedToolCalls = false;
 
   for await (const event of events) {
     if (event.data === "[DONE]") {
@@ -69,11 +70,17 @@ export async function* translateStream(
 
         const functionCall = rec(part["functionCall"]);
         if (functionCall) {
+          emittedToolCalls = true;
           const toolCallId = `call_${crypto.randomUUID()}`;
           yield {
             type: StreamEventType.TOOL_CALL_START,
             toolCallId,
             toolName: str(functionCall["name"]),
+          };
+          yield {
+            type: StreamEventType.TOOL_CALL_DELTA,
+            toolCallId,
+            argumentsDelta: JSON.stringify(functionCall["args"] ?? {}),
           };
           yield {
             type: StreamEventType.TOOL_CALL_END,
@@ -101,8 +108,7 @@ export async function* translateStream(
     yield { type: StreamEventType.TEXT_END };
   }
 
-  const hasToolCalls = finishReason === "STOP";
-  const mappedReason = mapFinishReason(finishReason, hasToolCalls);
+  const mappedReason = mapFinishReason(finishReason, emittedToolCalls);
   const usage: Usage = {
     inputTokens,
     outputTokens,
@@ -118,10 +124,12 @@ export async function* translateStream(
   };
 }
 
-function mapFinishReason(reason: string, _hasToolCalls: boolean): FinishReason {
+function mapFinishReason(reason: string, hasToolCalls: boolean): FinishReason {
   switch (reason) {
     case "STOP":
-      return { reason: "stop", raw: reason };
+      return hasToolCalls
+        ? { reason: "tool_calls", raw: reason }
+        : { reason: "stop", raw: reason };
     case "MAX_TOKENS":
       return { reason: "length", raw: reason };
     case "SAFETY":

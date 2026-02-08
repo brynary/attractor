@@ -3,17 +3,46 @@ import { StreamEventType } from "../types/stream-event.js";
 import { partialJsonParse } from "../utils/json.js";
 import { stream } from "./stream.js";
 import type { GenerateOptions } from "./generate.js";
+import type { Client } from "../client/client.js";
+import { getDefaultClient } from "../client/default-client.js";
 
 export interface StreamObjectOptions
   extends Omit<GenerateOptions, "responseFormat"> {
   schema: Record<string, unknown>;
   schemaName?: string;
+  strategy?: "auto" | "tool" | "json_schema";
+}
+
+function resolveStreamStrategy(
+  strategy: "auto" | "tool" | "json_schema",
+  client: Client,
+  provider?: string,
+): "tool" | "json_schema" {
+  if (strategy !== "auto") {
+    return strategy;
+  }
+  try {
+    const adapter = client.resolveProvider(provider);
+    if (adapter.supportsNativeJsonSchema) {
+      return "json_schema";
+    }
+  } catch {
+    // If provider resolution fails, fall back to tool
+  }
+  return "tool";
 }
 
 export async function* streamObject(
   options: StreamObjectOptions,
 ): AsyncGenerator<unknown> {
-  const { schema, schemaName, ...streamOpts } = options;
+  const { schema, schemaName, strategy: explicitStrategy, ...streamOpts } = options;
+
+  const resolved = resolveStreamStrategy(explicitStrategy ?? "auto", options.client ?? getDefaultClient(), options.provider);
+
+  if (resolved === "json_schema") {
+    yield* streamObjectWithJsonSchema({ schema, schemaName, ...streamOpts });
+    return;
+  }
 
   // Use tool extraction strategy with streaming
   const extractToolName = schemaName ?? "extract";
@@ -48,7 +77,7 @@ export async function* streamObject(
 export async function* streamObjectWithJsonSchema(
   options: StreamObjectOptions,
 ): AsyncGenerator<unknown> {
-  const { schema, schemaName, ...streamOpts } = options;
+  const { schema, schemaName, strategy: _strategy, ...streamOpts } = options;
 
   const result = stream({
     ...streamOpts,

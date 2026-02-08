@@ -254,6 +254,11 @@ export function translateRequest(
     body.max_output_tokens = request.maxTokens;
   }
 
+  // Stop sequences
+  if (request.stopSequences && request.stopSequences.length > 0) {
+    body.stop = request.stopSequences;
+  }
+
   // Reasoning effort
   if (request.reasoningEffort) {
     body.reasoning = { effort: request.reasoningEffort };

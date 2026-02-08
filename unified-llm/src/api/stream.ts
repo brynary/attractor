@@ -3,23 +3,25 @@ import { systemMessage, userMessage, toolResultMessage } from "../types/message.
 import type { StreamEvent } from "../types/stream-event.js";
 import { StreamEventType } from "../types/stream-event.js";
 import type { Response } from "../types/response.js";
-import { responseToolCalls } from "../types/response.js";
+import { responseToolCalls, responseText, responseReasoning } from "../types/response.js";
 import type { AdapterTimeout } from "../types/timeout.js";
 import type { TimeoutConfig } from "../types/timeout.js";
 import { StreamAccumulator } from "../utils/stream-accumulator.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
-import { ConfigurationError, SDKError, ProviderError } from "../types/errors.js";
+import { ConfigurationError, SDKError, ProviderError, RequestTimeoutError } from "../types/errors.js";
 import { computeDelay } from "../utils/retry.js";
 import type { GenerateOptions } from "./generate.js";
-import type { StreamResult } from "./types.js";
+import type { StepResult, StreamResult } from "./types.js";
 
-function toAdapterTimeout(timeout: number | TimeoutConfig): AdapterTimeout {
+function toAdapterTimeout(timeout: number | TimeoutConfig, remainingMs?: number): AdapterTimeout {
   if (typeof timeout === "number") {
-    return { connect: timeout, request: timeout, streamRead: timeout };
+    const ms = remainingMs != null ? Math.min(timeout, remainingMs) : timeout;
+    return { connect: ms, request: ms, streamRead: ms };
   }
   const ms = timeout.perStep ?? timeout.total ?? 120_000;
-  return { connect: ms, request: ms, streamRead: ms };
+  const clamped = remainingMs != null ? Math.min(ms, remainingMs) : ms;
+  return { connect: clamped, request: clamped, streamRead: clamped };
 }
 
 export type StreamOptions = GenerateOptions;
@@ -125,8 +127,23 @@ export function stream(options: StreamOptions): StreamResult {
 
     const maxToolRounds = options.maxToolRounds ?? 1;
     const client = options.client ?? getDefaultClient();
+    const steps: StepResult[] = [];
+
+    const timeoutCfg = typeof options.timeout === "number"
+      ? { total: options.timeout } : options.timeout;
+    const totalMs = timeoutCfg?.total;
+    const startTime = totalMs != null ? Date.now() : 0;
 
     for (let round = 0; round <= maxToolRounds; round++) {
+      let remainingMs: number | undefined;
+      if (totalMs != null) {
+        remainingMs = totalMs - (Date.now() - startTime);
+        if (remainingMs <= 0) {
+          throw new RequestTimeoutError(
+            `Total timeout of ${totalMs}ms exceeded`,
+          );
+        }
+      }
       const request = {
         model: options.model,
         messages: [...messages],
@@ -140,7 +157,7 @@ export function stream(options: StreamOptions): StreamResult {
         stopSequences: options.stopSequences,
         reasoningEffort: options.reasoningEffort,
         providerOptions: options.providerOptions,
-        timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout) : undefined,
+        timeout: options.timeout !== undefined ? toAdapterTimeout(options.timeout, remainingMs) : undefined,
         abortSignal: options.abortSignal,
       };
 
@@ -248,6 +265,28 @@ export function stream(options: StreamOptions): StreamResult {
         });
 
         const toolResults = await Promise.all(toolResultPromises);
+
+        // Build step result for stopWhen check
+        const step: StepResult = {
+          text: responseText(response),
+          reasoning: responseReasoning(response) || undefined,
+          toolCalls: rawToolCalls.map((tc) => ({
+            id: tc.id,
+            name: tc.name,
+            arguments: typeof tc.arguments === "string" ? {} : tc.arguments,
+            rawArguments: typeof tc.arguments === "string" ? tc.arguments : undefined,
+          })),
+          toolResults,
+          finishReason: response.finishReason,
+          usage: response.usage,
+          response,
+          warnings: response.warnings,
+        };
+        steps.push(step);
+
+        if (options.stopWhen && options.stopWhen(steps)) {
+          break;
+        }
 
         // Append assistant message and tool results
         messages.push(response.message);

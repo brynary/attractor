@@ -38,7 +38,15 @@ function extractErrorMessage(body: unknown): string {
   return typeof body === "string" ? body : JSON.stringify(body);
 }
 
-function extractRetryAfter(body: unknown): number | undefined {
+function extractRetryAfter(body: unknown, headers: Headers): number | undefined {
+  // Prefer Retry-After header over body field
+  const headerValue = headers.get("retry-after");
+  if (headerValue !== null) {
+    const seconds = Number(headerValue);
+    if (!Number.isNaN(seconds) && seconds > 0) {
+      return seconds;
+    }
+  }
   const obj = rec(body);
   if (obj) {
     const errorObj = rec(obj["error"]);
@@ -53,6 +61,7 @@ function mapError(
   status: number,
   body: unknown,
   provider: string,
+  headers: Headers,
 ): ProviderError | undefined {
   const message = extractErrorMessage(body);
 
@@ -75,7 +84,7 @@ function mapError(
     case 404:
       return new NotFoundError(message, provider, body);
     case 429: {
-      const retryAfter = extractRetryAfter(body);
+      const retryAfter = extractRetryAfter(body, headers);
       return new RateLimitError(message, provider, retryAfter, body);
     }
     default:
@@ -88,6 +97,7 @@ function mapError(
 
 export class OpenAICompatibleAdapter implements ProviderAdapter {
   readonly name = "openai-compatible";
+  readonly supportsNativeJsonSchema = true;
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
   private readonly defaultHeaders: Record<string, string>;

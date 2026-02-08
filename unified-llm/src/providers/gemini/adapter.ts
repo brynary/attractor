@@ -77,6 +77,7 @@ function mapError(
 
 export class GeminiAdapter implements ProviderAdapter {
   readonly name = "gemini";
+  readonly supportsNativeJsonSchema = true;
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly defaultHeaders: Record<string, string>;

@@ -5,7 +5,7 @@ import { setDefaultClient } from "../../src/client/default-client.js";
 import { StubAdapter } from "../stubs/stub-adapter.js";
 import type { Response } from "../../src/types/response.js";
 import { Role } from "../../src/types/role.js";
-import { ConfigurationError } from "../../src/types/errors.js";
+import { ConfigurationError, RequestTimeoutError } from "../../src/types/errors.js";
 
 function makeResponse(
   text: string,
@@ -349,5 +349,40 @@ describe("generate", () => {
     expect(result.totalUsage.totalTokens).toBe(45);
     // Last step usage should be just the last response
     expect(result.usage.inputTokens).toBe(20);
+  });
+
+  test("total timeout throws RequestTimeoutError", async () => {
+    const adapter = new StubAdapter("stub", [
+      {
+        response: makeResponse("", "tool_calls", [
+          { id: "tc-1", name: "slow_tool", arguments: {} },
+        ]),
+      },
+      {
+        response: makeResponse("Done"),
+      },
+    ]);
+    setup(adapter);
+
+    await expect(
+      generate({
+        model: "test-model",
+        prompt: "run slow tool",
+        tools: [
+          {
+            name: "slow_tool",
+            description: "A slow tool",
+            parameters: {},
+            execute: async () => {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              return "ok";
+            },
+          },
+        ],
+        maxToolRounds: 3,
+        timeout: { total: 50 },
+        client,
+      }),
+    ).rejects.toThrow(RequestTimeoutError);
   });
 });

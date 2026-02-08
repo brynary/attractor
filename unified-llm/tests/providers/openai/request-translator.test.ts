@@ -595,4 +595,14 @@ describe("OpenAI Request Translator", () => {
 
     expect(output).toMatch(/^data:image\/jpeg;base64,/);
   });
+
+  test("maps stopSequences to stop", () => {
+    const request = makeRequest({
+      messages: [{ role: Role.USER, content: [{ kind: "text", text: "Hi" }] }],
+      stopSequences: ["END", "STOP"],
+    });
+
+    const { body } = translateRequest(request, false);
+    expect(body.stop).toEqual(["END", "STOP"]);
+  });
 });

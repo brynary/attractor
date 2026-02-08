@@ -4,7 +4,7 @@ import { Client } from "../../src/client/client.js";
 import { StubAdapter } from "../stubs/stub-adapter.js";
 import type { StreamEvent } from "../../src/types/stream-event.js";
 import { StreamEventType } from "../../src/types/stream-event.js";
-import { ServerError, AuthenticationError } from "../../src/types/errors.js";
+import { ServerError, AuthenticationError, RequestTimeoutError } from "../../src/types/errors.js";
 
 function makeStreamEvents(text: string): StreamEvent[] {
   return [
@@ -226,6 +226,64 @@ describe("stream", () => {
     expect(adapter.calls).toHaveLength(1);
   });
 
+  test("stopWhen stops tool loop after condition met", async () => {
+    const toolCallEvents: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "my_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const finalEvents = makeStreamEvents("Done");
+
+    const adapter = new StubAdapter("stub", [
+      { events: toolCallEvents },
+      { events: toolCallEvents },
+      { events: finalEvents },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "do stuff",
+      tools: [
+        {
+          name: "my_tool",
+          description: "A tool",
+          parameters: {},
+          execute: async () => "ok",
+        },
+      ],
+      maxToolRounds: 5,
+      stopWhen: (steps) => steps.length >= 1,
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    // Should only have made 1 LLM call because stopWhen stopped after first tool round
+    expect(adapter.calls).toHaveLength(1);
+  });
+
   test("throws after max retries exhausted", async () => {
     const adapter = new StubAdapter("stub", [
       { error: new ServerError("fail 1", "stub") },
@@ -248,5 +306,63 @@ describe("stream", () => {
     }).toThrow("fail 3");
 
     expect(adapter.calls).toHaveLength(3);
+  });
+
+  test("total timeout throws RequestTimeoutError", async () => {
+    const toolCallEvents: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "slow_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const finalEvents = makeStreamEvents("Done");
+
+    const adapter = new StubAdapter("stub", [
+      { events: toolCallEvents },
+      { events: finalEvents },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "run slow tool",
+      tools: [
+        {
+          name: "slow_tool",
+          description: "A slow tool",
+          parameters: {},
+          execute: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            return "ok";
+          },
+        },
+      ],
+      maxToolRounds: 3,
+      timeout: { total: 50 },
+      client,
+    });
+
+    await expect(async () => {
+      for await (const _event of result) {
+        // consume
+      }
+    }).toThrow(RequestTimeoutError);
   });
 });

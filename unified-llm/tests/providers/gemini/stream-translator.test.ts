@@ -116,10 +116,39 @@ describe("Gemini stream translator", () => {
       expect(toolStart.toolCallId).toMatch(/^call_/);
     }
 
-    const toolEnd = events[2];
+    const toolDelta = events[2];
+    expect(toolDelta?.type).toBe(StreamEventType.TOOL_CALL_DELTA);
+    if (toolDelta?.type === StreamEventType.TOOL_CALL_DELTA) {
+      expect(toolDelta.argumentsDelta).toBe('{"city":"NYC"}');
+    }
+
+    const toolEnd = events[3];
     expect(toolEnd?.type).toBe(StreamEventType.TOOL_CALL_END);
 
-    const finish = events[3];
+    const finish = events[4];
+    expect(finish?.type).toBe(StreamEventType.FINISH);
+    if (finish?.type === StreamEventType.FINISH) {
+      expect(finish.finishReason).toEqual({ reason: "tool_calls", raw: "STOP" });
+    }
+  });
+
+  test("text-only STOP produces stop finish reason", async () => {
+    const sseEvents: SSEEvent[] = [
+      makeSSE({
+        candidates: [
+          {
+            content: { parts: [{ text: "Hello" }], role: "model" },
+            finishReason: "STOP",
+          },
+        ],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1 },
+        modelVersion: "gemini-3-pro-preview",
+      }),
+    ];
+
+    const events = await collectEvents(sseEvents);
+    const finish = events.at(-1);
+
     expect(finish?.type).toBe(StreamEventType.FINISH);
     if (finish?.type === StreamEventType.FINISH) {
       expect(finish.finishReason).toEqual({ reason: "stop", raw: "STOP" });

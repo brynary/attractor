@@ -111,7 +111,7 @@ export async function httpRequest(
         options.provider,
         {
           statusCode: response.status,
-          retryable: response.status >= 500 || response.status === 429,
+          retryable: true,
           raw: errorBody,
         },
       );
@@ -197,7 +197,7 @@ export async function httpRequestStream(
         options.provider,
         {
           statusCode: response.status,
-          retryable: response.status >= 500 || response.status === 429,
+          retryable: true,
           raw: errorBody,
         },
       );

@@ -38,7 +38,7 @@ export class Client {
     this.streamMiddleware = options.streamMiddleware ?? [];
   }
 
-  private resolveProvider(providerName?: string): ProviderAdapter {
+  resolveProvider(providerName?: string): ProviderAdapter {
     const name = providerName ?? this.defaultProvider;
     if (!name) {
       throw new ConfigurationError(
@@ -90,7 +90,17 @@ export class Client {
     await Promise.all(closePromises);
   }
 
-  static fromEnv(): Client {
+  async initialize(): Promise<void> {
+    const promises: Promise<void>[] = [];
+    for (const adapter of this.providers.values()) {
+      if (adapter.initialize) {
+        promises.push(adapter.initialize());
+      }
+    }
+    await Promise.all(promises);
+  }
+
+  static fromEnvSync(): Client {
     const client = new Client();
 
     const anthropicKey = process.env["ANTHROPIC_API_KEY"];
@@ -146,6 +156,12 @@ export class Client {
       );
     }
 
+    return client;
+  }
+
+  static async fromEnv(): Promise<Client> {
+    const client = Client.fromEnvSync();
+    await client.initialize();
     return client;
   }
 }

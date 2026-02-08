@@ -100,6 +100,7 @@ function mapError(
 
 export class OpenAIAdapter implements ProviderAdapter {
   readonly name = "openai";
+  readonly supportsNativeJsonSchema = true;
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly orgId?: string;

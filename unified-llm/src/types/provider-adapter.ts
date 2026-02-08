@@ -9,4 +9,5 @@ export interface ProviderAdapter {
   close?(): Promise<void>;
   initialize?(): Promise<void>;
   supportsToolChoice?(mode: string): boolean;
+  supportsNativeJsonSchema?: boolean;
 }

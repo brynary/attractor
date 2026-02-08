@@ -206,3 +206,75 @@ describe("generateObjectWithJsonSchema", () => {
     ).rejects.toThrow(NoObjectGeneratedError);
   });
 });
+
+describe("generateObject strategy dispatch", () => {
+  test("auto strategy uses json_schema when adapter supports it", async () => {
+    const adapter = new StubAdapter("stub", [
+      { response: makeTextResponse('{"name": "Alice"}') },
+    ]);
+    Object.assign(adapter, { supportsNativeJsonSchema: true });
+
+    const client = new Client({
+      providers: { stub: adapter },
+      defaultProvider: "stub",
+    });
+
+    const result = await generateObject({
+      model: "test-model",
+      prompt: "Extract",
+      schema: { type: "object", properties: { name: { type: "string" } } },
+      client,
+    });
+
+    expect(result.output).toEqual({ name: "Alice" });
+    const sentRequest = adapter.calls[0];
+    expect(sentRequest?.responseFormat).toBeDefined();
+    expect(sentRequest?.tools).toBeUndefined();
+  });
+
+  test("auto strategy uses tool when adapter lacks supportsNativeJsonSchema", async () => {
+    const adapter = new StubAdapter("stub", [
+      { response: makeToolCallResponse("extract", { name: "Bob" }) },
+    ]);
+
+    const client = new Client({
+      providers: { stub: adapter },
+      defaultProvider: "stub",
+    });
+
+    const result = await generateObject({
+      model: "test-model",
+      prompt: "Extract",
+      schema: { type: "object", properties: { name: { type: "string" } } },
+      client,
+    });
+
+    expect(result.output).toEqual({ name: "Bob" });
+    const sentRequest = adapter.calls[0];
+    expect(sentRequest?.tools).toBeDefined();
+  });
+
+  test("explicit tool strategy overrides auto", async () => {
+    const adapter = new StubAdapter("stub", [
+      { response: makeToolCallResponse("extract", { val: 1 }) },
+    ]);
+    Object.assign(adapter, { supportsNativeJsonSchema: true });
+
+    const client = new Client({
+      providers: { stub: adapter },
+      defaultProvider: "stub",
+    });
+
+    const result = await generateObject({
+      model: "test-model",
+      prompt: "Extract",
+      schema: { type: "object" },
+      strategy: "tool",
+      client,
+    });
+
+    expect(result.output).toEqual({ val: 1 });
+    const sentRequest = adapter.calls[0];
+    expect(sentRequest?.tools).toBeDefined();
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, test, expect, setDefaultTimeout } from "bun:test";
 
 setDefaultTimeout(15_000);
-import { httpRequestStream } from "../../src/utils/http.js";
+import { httpRequest, httpRequestStream } from "../../src/utils/http.js";
 
 describe("httpRequestStream", () => {
   test("stream read timeout fires when chunks stop arriving", async () => {
@@ -94,6 +94,58 @@ describe("httpRequestStream", () => {
       }
 
       expect(chunks).toHaveLength(3);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("unknown status code produces retryable error", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ error: "I'm a teapot" }), {
+          status: 418,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    try {
+      await expect(
+        httpRequestStream({
+          url: `http://localhost:${server.port}/test`,
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: {},
+          provider: "test",
+        }),
+      ).rejects.toMatchObject({ retryable: true });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("unknown status code produces retryable error (non-streaming)", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ error: "I'm a teapot" }), {
+          status: 418,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    try {
+      await expect(
+        httpRequest({
+          url: `http://localhost:${server.port}/test`,
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: {},
+          provider: "test",
+        }),
+      ).rejects.toMatchObject({ retryable: true });
     } finally {
       server.stop(true);
     }

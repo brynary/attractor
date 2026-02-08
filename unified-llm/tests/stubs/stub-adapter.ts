@@ -11,13 +11,15 @@ export interface StubResponse {
 
 export class StubAdapter implements ProviderAdapter {
   readonly name: string;
+  readonly supportsNativeJsonSchema: boolean;
   private responses: StubResponse[];
   private callIndex = 0;
   readonly calls: Request[] = [];
 
-  constructor(name: string, responses: StubResponse[]) {
+  constructor(name: string, responses: StubResponse[], options?: { supportsNativeJsonSchema?: boolean }) {
     this.name = name;
     this.responses = responses;
+    this.supportsNativeJsonSchema = options?.supportsNativeJsonSchema ?? false;
   }
 
   async complete(request: Request): Promise<Response> {
