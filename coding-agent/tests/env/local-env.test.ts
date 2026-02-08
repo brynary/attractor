@@ -48,6 +48,15 @@ describe("LocalExecutionEnvironment", () => {
     );
   });
 
+  test("readFile throws for binary files", async () => {
+    await fsWriteFile(
+      join(tempDir, "binary.bin"),
+      Buffer.from([0x00, 0xff, 0x10, 0x00, 0x41]),
+    );
+
+    await expect(env.readFile("binary.bin")).rejects.toThrow("Binary file");
+  });
+
   test("writeFile creates a file with correct content", async () => {
     await env.writeFile("write-test.txt", "hello world");
 

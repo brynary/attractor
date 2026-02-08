@@ -1240,4 +1240,146 @@ describe("Session", () => {
     const result = await spawn!.executor({ task: "do work" }, env);
     expect(result).toContain("disabled at depth 0");
   });
+
+  test("non-streaming emits ASSISTANT_TEXT_END for tool-only turns", async () => {
+    const files = new Map([["/test/x.ts", "x"]]);
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          { id: "tc1", name: "read_file", arguments: { file_path: "/test/x.ts" } },
+        ]),
+        makeTextResponse("done"),
+      ],
+      { files },
+    );
+
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
+    await session.submit("read x");
+    const events = await eventsPromise;
+
+    const endEvents = events.filter((e) => e.kind === EventKind.ASSISTANT_TEXT_END);
+    expect(endEvents.length).toBeGreaterThanOrEqual(2);
+    expect(endEvents[0]?.data["text"]).toBe("");
+    expect(endEvents[0]?.data["toolCallCount"]).toBe(1);
+  });
+
+  test("custom awaitingInputDetector overrides default heuristic", async () => {
+    const { session } = createTestSession(
+      [makeTextResponse("What file should I read?")],
+      {
+        config: {
+          awaitingInputDetector: () => false,
+        },
+      },
+    );
+
+    await session.submit("Help me");
+    expect(session.state).toBe(SessionState.IDLE);
+  });
+
+  test("sessions do not share subagent handles when reusing the same profile", async () => {
+    const adapter = new StubAdapter("anthropic", []);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const sharedProfile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+
+    const sessionA = new Session({
+      providerProfile: sharedProfile,
+      executionEnv: env,
+      llmClient: client,
+    });
+    const sessionB = new Session({
+      providerProfile: sharedProfile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    sessionA.subagents.set(
+      "agent-a",
+      createFakeSubAgentHandle({ close: async () => {} }),
+    );
+
+    expect(sessionA.subagents.size).toBe(1);
+    expect(sessionB.subagents.size).toBe(0);
+
+    await sessionA.close();
+    await sessionB.close();
+  });
+
+  test("spawn_agent working_dir scopes child shell execution cwd", async () => {
+    const responses = [
+      makeToolCallResponse([
+        {
+          id: "parent-spawn",
+          name: "spawn_agent",
+          arguments: { task: "run a shell command", working_dir: "sub" },
+        },
+      ]),
+      makeToolCallResponse([
+        {
+          id: "child-shell",
+          name: "shell",
+          arguments: { command: "echo child" },
+        },
+      ]),
+      makeTextResponse("child done"),
+    ];
+    const adapter = new StubAdapter(
+      "anthropic",
+      responses.map((response) => ({ response })),
+    );
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+
+    class RecordingEnv extends StubExecutionEnvironment {
+      readonly execCalls: Array<{ command: string; workingDir?: string }> = [];
+
+      async execCommand(
+        command: string,
+        timeoutMs: number,
+        workingDir?: string,
+        envVars?: Record<string, string>,
+        abortSignal?: AbortSignal,
+      ) {
+        this.execCalls.push({ command, workingDir });
+        return super.execCommand(command, timeoutMs, workingDir, envVars, abortSignal);
+      }
+    }
+
+    const env = new RecordingEnv({
+      commandResults: new Map([
+        [
+          "echo child",
+          {
+            stdout: "child\n",
+            stderr: "",
+            exitCode: 0,
+            timedOut: false,
+            durationMs: 1,
+          },
+        ],
+      ]),
+    });
+
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+      config: { maxToolRoundsPerInput: 1 },
+    });
+
+    await session.submit("spawn a child");
+
+    let sawScopedCall = false;
+    for (let i = 0; i < 30; i++) {
+      sawScopedCall = env.execCalls.some(
+        (call) => call.command === "echo child" && call.workingDir === "/test/sub",
+      );
+      if (sawScopedCall) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(sawScopedCall).toBe(true);
+    await session.close();
+  });
 });

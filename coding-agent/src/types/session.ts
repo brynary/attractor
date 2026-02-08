@@ -31,6 +31,11 @@ export interface SessionConfig {
   userInstructions?: string;
   /** Spec extension: enables streaming via Client.stream() instead of Client.complete(). */
   enableStreaming: boolean;
+  /**
+   * Optional hook to classify whether an assistant response requires user input.
+   * When omitted, a conservative built-in heuristic is used.
+   */
+  awaitingInputDetector?: (assistantText: string) => boolean;
 }
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {

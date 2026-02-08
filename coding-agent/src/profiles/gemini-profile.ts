@@ -32,7 +32,11 @@ import {
 
 export function createGeminiProfile(
   model: string,
-  options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
+  options?: {
+    sessionFactory?: SessionFactory;
+    subagentConfig?: SubAgentDepthConfig;
+    basePrompt?: string;
+  },
 ): ProviderProfile {
   const registry = new ToolRegistry();
   const agents = new Map<string, SubAgentHandle>();
@@ -75,7 +79,7 @@ export function createGeminiProfile(
         .map((t) => `- ${t.name}: ${t.description}`)
         .join("\n");
       return buildSystemPrompt(
-        GEMINI_BASE_PROMPT,
+        options?.basePrompt ?? GEMINI_BASE_PROMPT,
         envContext,
         toolDescs,
         projectDocs,
@@ -109,5 +113,6 @@ export function createGeminiProfile(
     contextWindowSize: 1_000_000,
     subagentHandles: agents,
     subagentDepthConfig: depthConfig,
+    subagentSessionFactory: options?.sessionFactory,
   };
 }

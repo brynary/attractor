@@ -19,12 +19,10 @@ export interface SubAgentHandle {
   id: string;
   status: "running" | "completed" | "failed";
   /** The child session instance (read-only view). */
-  session?: SubAgentSessionView;
+  session: SubAgentSessionView;
   submit: (input: string) => Promise<void>;
   waitForCompletion: () => Promise<SubAgentResult>;
   close: () => Promise<void>;
-  /** Optional: inspect subagent conversation history. */
-  getHistory?: () => Turn[];
 }
 
 export type SessionFactory = (options: {

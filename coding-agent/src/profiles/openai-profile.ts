@@ -26,7 +26,11 @@ import {
 
 export function createOpenAIProfile(
   model: string,
-  options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
+  options?: {
+    sessionFactory?: SessionFactory;
+    subagentConfig?: SubAgentDepthConfig;
+    basePrompt?: string;
+  },
 ): ProviderProfile {
   const registry = new ToolRegistry();
   const agents = new Map<string, SubAgentHandle>();
@@ -65,7 +69,7 @@ export function createOpenAIProfile(
         .map((t) => `- ${t.name}: ${t.description}`)
         .join("\n");
       return buildSystemPrompt(
-        OPENAI_BASE_PROMPT,
+        options?.basePrompt ?? OPENAI_BASE_PROMPT,
         envContext,
         toolDescs,
         projectDocs,
@@ -89,5 +93,6 @@ export function createOpenAIProfile(
     contextWindowSize: 200_000,
     subagentHandles: agents,
     subagentDepthConfig: depthConfig,
+    subagentSessionFactory: options?.sessionFactory,
   };
 }

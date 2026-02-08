@@ -26,7 +26,11 @@ import {
 
 export function createAnthropicProfile(
   model: string,
-  options?: { sessionFactory?: SessionFactory; subagentConfig?: SubAgentDepthConfig },
+  options?: {
+    sessionFactory?: SessionFactory;
+    subagentConfig?: SubAgentDepthConfig;
+    basePrompt?: string;
+  },
 ): ProviderProfile {
   const registry = new ToolRegistry();
   const agents = new Map<string, SubAgentHandle>();
@@ -65,7 +69,7 @@ export function createAnthropicProfile(
         .map((t) => `- ${t.name}: ${t.description}`)
         .join("\n");
       return buildSystemPrompt(
-        ANTHROPIC_BASE_PROMPT,
+        options?.basePrompt ?? ANTHROPIC_BASE_PROMPT,
         envContext,
         toolDescs,
         projectDocs,
@@ -96,5 +100,6 @@ export function createAnthropicProfile(
     contextWindowSize: 200_000,
     subagentHandles: agents,
     subagentDepthConfig: depthConfig,
+    subagentSessionFactory: options?.sessionFactory,
   };
 }

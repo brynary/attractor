@@ -110,12 +110,20 @@ describe("validateToolArgs", () => {
     );
   });
 
-  test("allows null/undefined values for optional fields", () => {
+  test("allows undefined values for optional fields", () => {
     const result = validateToolArgs(
       { file_path: "/test", offset: undefined },
       readFileSchema,
     );
     expect(result).toBeNull();
+  });
+
+  test("rejects null for typed optional fields", () => {
+    const result = validateToolArgs(
+      { file_path: "/test", offset: null },
+      readFileSchema,
+    );
+    expect(result).toBe('expected "offset" to be integer, got null');
   });
 
   test("accepts value in enum list", () => {

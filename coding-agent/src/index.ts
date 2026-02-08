@@ -42,4 +42,8 @@ export {
   buildSystemPrompt,
 } from "./profiles/system-prompt.js";
 export { LocalExecutionEnvironment } from "./env/local-env.js";
+export {
+  ScopedExecutionEnvironment,
+  scopeExecutionEnvironment,
+} from "./env/scoped-env.js";
 export { filterEnvironmentVariables } from "./env/env-filter.js";

@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { StubExecutionEnvironment } from "../stubs/stub-env.js";
 import { createAnthropicProfile } from "../../src/profiles/anthropic-profile.js";
+import { SessionState, DEFAULT_SESSION_CONFIG } from "../../src/types/index.js";
 
 describe("createAnthropicProfile", () => {
   const profile = createAnthropicProfile("claude-opus-4-6");
@@ -84,6 +85,7 @@ describe("createAnthropicProfile", () => {
     const factory = async () => ({
       id: "agent-1",
       status: "running" as const,
+      session: { id: "s-1", state: SessionState.IDLE, history: [] as const, config: DEFAULT_SESSION_CONFIG },
       submit: async () => {},
       waitForCompletion: async () => ({ output: "", success: true, turnsUsed: 0 }),
       close: async () => {},
@@ -118,5 +120,14 @@ describe("createAnthropicProfile", () => {
     expect(shellTool).toBeDefined();
     const result = await shellTool!.executor({ command: "test-cmd" }, env);
     expect(result).toContain("timed out after 120000ms");
+  });
+
+  test("supports overriding base prompt for strict provider alignment", () => {
+    const custom = createAnthropicProfile("claude-opus-4-6", {
+      basePrompt: "CUSTOM_ANTHROPIC_PROMPT",
+    });
+    const env = new StubExecutionEnvironment();
+    const prompt = custom.buildSystemPrompt(env, "");
+    expect(prompt).toContain("CUSTOM_ANTHROPIC_PROMPT");
   });
 });

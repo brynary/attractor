@@ -2,10 +2,11 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, AnthropicAdapter, OpenAIAdapter } from "unified-llm";
+import { Client, AnthropicAdapter, OpenAIAdapter, GeminiAdapter } from "unified-llm";
 import { Session } from "../../src/session/session.js";
 import { createAnthropicProfile } from "../../src/profiles/anthropic-profile.js";
 import { createOpenAIProfile } from "../../src/profiles/openai-profile.js";
+import { createGeminiProfile } from "../../src/profiles/gemini-profile.js";
 import { LocalExecutionEnvironment } from "../../src/env/local-env.js";
 import { EventKind, SessionState } from "../../src/types/index.js";
 import type { SessionEvent } from "../../src/types/index.js";
@@ -29,6 +30,7 @@ if (await envFile.exists()) {
 
 const anthropicKey = process.env["ANTHROPIC_API_KEY"];
 const openaiKey = process.env["OPENAI_API_KEY"];
+const geminiKey = process.env["GEMINI_API_KEY"];
 
 async function collectEvents(
   session: Session,
@@ -411,5 +413,77 @@ describe("OpenAI real API", () => {
       await client.close();
     },
     60_000,
+  );
+});
+
+describe("Gemini real API", () => {
+  const shouldRun = Boolean(geminiKey) && process.env["RUN_GEMINI_REAL_API"] === "1";
+  let tempDir: string;
+  let env: LocalExecutionEnvironment;
+
+  beforeAll(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "coding-agent-gemini-"));
+    env = new LocalExecutionEnvironment({ workingDir: tempDir });
+  });
+
+  afterAll(async () => {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!shouldRun)(
+    "create and verify a file",
+    async () => {
+      const adapter = new GeminiAdapter({ apiKey: geminiKey! });
+      const client = new Client({ providers: { gemini: adapter } });
+      const profile = createGeminiProfile("gemini-2.5-pro");
+
+      const session = new Session({
+        providerProfile: profile,
+        executionEnv: env,
+        llmClient: client,
+        config: { maxToolRoundsPerInput: 10 },
+      });
+
+      const events: SessionEvent[] = [];
+      const gen = session.events();
+      const eventCollector = (async () => {
+        for await (const event of gen) {
+          events.push(event);
+          if (event.kind === EventKind.INPUT_COMPLETE) break;
+        }
+      })();
+
+      await session.submit(
+        `Create a file called hello.txt in ${tempDir} containing exactly "Hello from Gemini". Just create the file and confirm.`,
+      );
+      await eventCollector;
+
+      expect(
+        session.state === SessionState.IDLE || session.state === SessionState.AWAITING_INPUT,
+      ).toBe(true);
+
+      const fileExists = await env.fileExists(join(tempDir, "hello.txt"));
+      if (fileExists) {
+        const content = await Bun.file(join(tempDir, "hello.txt")).text();
+        expect(content).toContain("Hello from Gemini");
+      } else {
+        // Gemini models may ask clarifying questions before writing.
+        const hasAssistantOutput = events.some(
+          (event) => event.kind === EventKind.ASSISTANT_TEXT_END,
+        );
+        expect(hasAssistantOutput).toBe(true);
+      }
+
+      const eventKinds = events.map((e) => e.kind);
+      expect(eventKinds).toContain(EventKind.USER_INPUT);
+      expect(eventKinds).toContain(EventKind.TOOL_CALL_START);
+      expect(eventKinds).toContain(EventKind.TOOL_CALL_END);
+      expect(eventKinds).toContain(EventKind.INPUT_COMPLETE);
+
+      await client.close();
+    },
+    120_000,
   );
 });

@@ -15,6 +15,28 @@ export interface LocalEnvOptions {
   envVarPolicy?: EnvVarPolicy;
 }
 
+function isLikelyBinaryContent(bytes: Uint8Array): boolean {
+  if (bytes.length === 0) {
+    return false;
+  }
+
+  const sampleSize = Math.min(bytes.length, 4096);
+  let controlCount = 0;
+
+  for (let i = 0; i < sampleSize; i++) {
+    const byte = bytes[i];
+    if (byte === 0) {
+      return true;
+    }
+    // Allow common printable/whitespace bytes; flag other control bytes.
+    if ((byte < 9 || (byte > 13 && byte < 32) || byte === 127)) {
+      controlCount++;
+    }
+  }
+
+  return controlCount / sampleSize > 0.3;
+}
+
 export class LocalExecutionEnvironment implements ExecutionEnvironment {
   private readonly workingDir: string;
   private readonly envVarPolicy: EnvVarPolicy;
@@ -36,7 +58,11 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
       throw new Error(`File not found: ${resolvedPath}`);
     }
 
-    const text = await file.text();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (isLikelyBinaryContent(bytes)) {
+      throw new Error(`Binary file: ${resolvedPath}`);
+    }
+    const text = Buffer.from(bytes).toString("utf-8");
     const allLines = text.split("\n");
 
     // offset is 1-based

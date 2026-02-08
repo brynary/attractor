@@ -46,6 +46,7 @@ import { discoverProjectDocs } from "../profiles/system-prompt.js";
 import { createOpenAIProfile } from "../profiles/openai-profile.js";
 import { createAnthropicProfile } from "../profiles/anthropic-profile.js";
 import { createGeminiProfile } from "../profiles/gemini-profile.js";
+import { scopeExecutionEnvironment } from "../env/scoped-env.js";
 
 const SUBAGENT_TOOL_NAMES = new Set([
   "spawn_agent",
@@ -53,11 +54,6 @@ const SUBAGENT_TOOL_NAMES = new Set([
   "wait",
   "close_agent",
 ]);
-
-interface ProviderProfileRuntimeMeta {
-  subagentHandles?: Map<string, SubAgentHandle>;
-  subagentDepthConfig?: SubAgentDepthConfig;
-}
 
 export class Session {
   readonly id: string;
@@ -71,6 +67,7 @@ export class Session {
   private steeringQueue: string[];
   private followupQueue: string[];
   subagents: Map<string, SubAgentHandle>;
+  private subagentDepthConfig: SubAgentDepthConfig;
   private abortController: AbortController;
   private runningAbortControllers: Set<AbortController>;
   private runningToolPromises: Set<Promise<void>>;
@@ -104,15 +101,12 @@ export class Session {
     this.emitter = new EventEmitter();
     this.steeringQueue = [];
     this.followupQueue = [];
-    const runtime = this.providerProfile as ProviderProfile & ProviderProfileRuntimeMeta;
-    if (!runtime.subagentHandles) {
-      runtime.subagentHandles = new Map();
-    }
-    this.subagents = runtime.subagentHandles;
-    if (!runtime.subagentDepthConfig) {
-      runtime.subagentDepthConfig = { currentDepth: 0, maxDepth: this.config.maxSubagentDepth };
-    }
-    runtime.subagentDepthConfig.maxDepth = this.config.maxSubagentDepth;
+    this.subagents = new Map();
+    const profileDepth = this.providerProfile.subagentDepthConfig;
+    this.subagentDepthConfig = {
+      currentDepth: profileDepth?.currentDepth ?? 0,
+      maxDepth: this.config.maxSubagentDepth,
+    };
     this.abortController = new AbortController();
     this.runningAbortControllers = new Set();
     this.runningToolPromises = new Set();
@@ -335,8 +329,10 @@ export class Session {
 
       // j. Emit (non-streaming path emits ASSISTANT_TEXT_END here;
       //    streaming path already emitted START/DELTA/END in callLLMStreaming)
-      if (!useStreaming && text) {
-        this.emit(EventKind.ASSISTANT_TEXT_START);
+      if (!useStreaming) {
+        if (text.length > 0) {
+          this.emit(EventKind.ASSISTANT_TEXT_START);
+        }
         this.emit(EventKind.ASSISTANT_TEXT_END, {
           text,
           reasoning,
@@ -394,19 +390,13 @@ export class Session {
       return;
     }
 
-    // 9. Set state: if the last assistant message ends with '?' and had no tool
-    //    calls, the model is asking a question → AWAITING_INPUT; otherwise → IDLE.
-    //    NOTE: The trailing '?' heuristic is a best-effort approximation. The spec
-    //    does not define a definitive mechanism for detecting when the model is
-    //    requesting user input, so we rely on this simple surface-level check.
-    //    It may produce false positives (rhetorical questions) or false negatives
-    //    (questions not ending in '?'). This is acceptable given the lack of a
-    //    reliable signal from the LLM response.
+    // 9. Set state based on whether the last assistant response appears to ask
+    //    the user for additional input.
     const lastAssistant = this.history.findLast((t) => t.kind === "assistant");
     const askedQuestion =
       lastAssistant?.kind === "assistant" &&
       lastAssistant.toolCalls.length === 0 &&
-      lastAssistant.content.trim().endsWith("?");
+      this.isAwaitingInput(lastAssistant.content);
     this.state = askedQuestion ? SessionState.AWAITING_INPUT : SessionState.IDLE;
 
     // 10. Emit INPUT_COMPLETE
@@ -572,15 +562,9 @@ export class Session {
 
   private ensureSubagentToolsRegistered(): void {
     const registry = this.providerProfile.toolRegistry;
-    const hasAllSubagentTools = [...SUBAGENT_TOOL_NAMES].every(
-      (name) => registry.get(name) !== undefined,
-    );
-    if (hasAllSubagentTools) {
-      return;
-    }
-
     const depthConfig = this.getSubagentDepthConfig();
-    const sessionFactory = this.createInternalSubagentFactory();
+    const sessionFactory =
+      this.providerProfile.subagentSessionFactory ?? this.createInternalSubagentFactory();
     registry.register(createSpawnAgentTool(sessionFactory, this.subagents, depthConfig));
     registry.register(createSendInputTool(this.subagents));
     registry.register(createWaitTool(this.subagents));
@@ -588,15 +572,8 @@ export class Session {
   }
 
   private getSubagentDepthConfig(): SubAgentDepthConfig {
-    const runtime = this.providerProfile as ProviderProfile & ProviderProfileRuntimeMeta;
-    if (!runtime.subagentDepthConfig) {
-      runtime.subagentDepthConfig = {
-        currentDepth: 0,
-        maxDepth: this.config.maxSubagentDepth,
-      };
-    }
-    runtime.subagentDepthConfig.maxDepth = this.config.maxSubagentDepth;
-    return runtime.subagentDepthConfig;
+    this.subagentDepthConfig.maxDepth = this.config.maxSubagentDepth;
+    return this.subagentDepthConfig;
   }
 
   private createInternalSubagentFactory(): SessionFactory {
@@ -612,13 +589,18 @@ export class Session {
         currentDepth: this.getSubagentDepthConfig().currentDepth + 1,
         maxDepth: this.config.maxSubagentDepth,
       };
+      const baseExecutionEnv = executionEnv ?? this.executionEnv;
+      const childExecutionEnv =
+        workingDir !== undefined
+          ? scopeExecutionEnvironment(baseExecutionEnv, workingDir)
+          : baseExecutionEnv;
       const childProfile = this.createChildProfileForSubagent(
         model ?? this.providerProfile.model,
         effectiveDepth,
       );
       const childSession = new Session({
         providerProfile: childProfile,
-        executionEnv: executionEnv ?? this.executionEnv,
+        executionEnv: childExecutionEnv,
         llmClient: this.llmClient,
         config: {
           ...this.config,
@@ -785,13 +767,11 @@ export class Session {
     const response = accumulator.response();
     const fullText = responseText(response);
 
-    if (emittedTextStart) {
-      this.emit(EventKind.ASSISTANT_TEXT_END, {
-        text: fullText,
-        reasoning: responseReasoning(response) || null,
-        toolCallCount: responseToolCalls(response).length,
-      });
-    }
+    this.emit(EventKind.ASSISTANT_TEXT_END, {
+      text: fullText,
+      reasoning: responseReasoning(response) || null,
+      toolCallCount: responseToolCalls(response).length,
+    });
 
     return response;
   }
@@ -807,6 +787,20 @@ export class Session {
       });
       this.emit(EventKind.STEERING_INJECTED, { content: msg });
     }
+  }
+
+  private isAwaitingInput(text: string): boolean {
+    if (this.config.awaitingInputDetector) {
+      return this.config.awaitingInputDetector(text);
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed.endsWith("?")) {
+      return false;
+    }
+
+    const lower = trimmed.toLowerCase();
+    return /\b(can you|could you|would you|would you like|want me to|please|please provide|please share|which|what|where|when|who|how)\b/.test(lower);
   }
 
   private checkContextUsage(): void {

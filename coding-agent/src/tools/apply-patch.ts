@@ -34,6 +34,10 @@ export interface HunkLine {
   content: string;
 }
 
+function isHunkHeader(line: string): boolean {
+  return /^@@(?: .*)?$/.test(line);
+}
+
 export function parsePatch(patch: string): PatchOperation[] {
   const lines = patch.split("\n");
   let i = 0;
@@ -64,11 +68,16 @@ export function parsePatch(patch: string): PatchOperation[] {
       const contentLines: string[] = [];
       while (i < lines.length) {
         const cl = lines[i] ?? "";
-        if (cl.startsWith("*** ") || cl.startsWith("@@ ")) break;
+        if (cl.startsWith("*** ") || isHunkHeader(cl)) break;
         if (cl.startsWith("+")) {
           contentLines.push(cl.slice(1));
+        } else {
+          throw new Error(`Invalid patch: add file lines must start with '+': ${cl}`);
         }
         i++;
+      }
+      if (contentLines.length === 0) {
+        throw new Error(`Invalid patch: add file "${path}" must contain at least one '+' line`);
       }
       operations.push({ kind: "add", path, content: contentLines.join("\n") });
     } else if (line.startsWith("*** Delete File: ")) {
@@ -89,8 +98,8 @@ export function parsePatch(patch: string): PatchOperation[] {
       while (i < lines.length) {
         const hl = lines[i] ?? "";
         if (hl.startsWith("*** ")) break;
-        if (hl.startsWith("@@ ")) {
-          const contextHint = hl.slice(3).trim();
+        if (isHunkHeader(hl)) {
+          const contextHint = hl.length > 2 ? hl.slice(2).trimStart() : "";
           i++;
           const hunkLines: HunkLine[] = [];
           while (i < lines.length) {
@@ -99,20 +108,29 @@ export function parsePatch(patch: string): PatchOperation[] {
               i++;
               continue;
             }
-            if (hunkLine.startsWith("@@ ") || hunkLine.startsWith("*** ")) break;
+            if (isHunkHeader(hunkLine) || hunkLine.startsWith("*** ")) break;
             if (hunkLine.startsWith("+")) {
               hunkLines.push({ kind: "add", content: hunkLine.slice(1) });
             } else if (hunkLine.startsWith("-")) {
               hunkLines.push({ kind: "delete", content: hunkLine.slice(1) });
             } else if (hunkLine.startsWith(" ")) {
               hunkLines.push({ kind: "context", content: hunkLine.slice(1) });
+            } else {
+              throw new Error(`Invalid patch: unexpected hunk line "${hunkLine}"`);
             }
             i++;
           }
+          if (hunkLines.length === 0) {
+            throw new Error("Invalid patch: hunk must contain at least one change or context line");
+          }
           hunks.push({ contextHint, lines: hunkLines });
         } else {
-          i++;
+          throw new Error(`Invalid patch: unexpected line in update block "${hl}"`);
         }
+      }
+
+      if (hunks.length === 0) {
+        throw new Error(`Invalid patch: update file "${path}" requires at least one hunk`);
       }
 
       const op: PatchOperation = { kind: "update", path, hunks };
@@ -121,7 +139,11 @@ export function parsePatch(patch: string): PatchOperation[] {
       }
       operations.push(op);
     } else {
-      i++;
+      if (line.trim().length === 0) {
+        i++;
+        continue;
+      }
+      throw new Error(`Invalid patch: unexpected line "${line}"`);
     }
   }
 

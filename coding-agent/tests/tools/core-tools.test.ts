@@ -275,6 +275,26 @@ describe("edit_file", () => {
     expect(content).toContain("const y = 2;");
   });
 
+  test("falls back to fuzzy matching when Unicode punctuation differs", async () => {
+    const env = new StubExecutionEnvironment({
+      files: new Map([["/test/file.ts", "const msg = \u201Chello world\u201D;\nconst y = 2;"]]),
+    });
+    const tool = createEditFileTool();
+    const result = await tool.executor(
+      {
+        file_path: "/test/file.ts",
+        old_string: 'const msg = "hello world";',
+        new_string: 'const msg = "goodbye world";',
+      },
+      env,
+    );
+    expect(result).toContain("fuzzy match");
+
+    const content = await env.readFile("/test/file.ts");
+    expect(content).toContain('const msg = "goodbye world";');
+    expect(content).toContain("const y = 2;");
+  });
+
   test("fuzzy match throws when neither exact nor normalized match found", async () => {
     const env = new StubExecutionEnvironment({
       files: new Map([["/test/file.ts", "const x = 1;"]]),

@@ -66,13 +66,17 @@ export function validateToolArgs(
 }
 
 function checkType(value: unknown, schema: SchemaProperty, fieldName: string): string | null {
-  if (value === null || value === undefined) {
-    return null; // null/undefined handled by required check
+  if (value === undefined) {
+    return null; // undefined handled by required check
   }
 
   const expectedType = schema.type;
   if (expectedType === undefined) {
     return null;
+  }
+
+  if (value === null) {
+    return `expected "${fieldName}" to be ${expectedType}, got null`;
   }
 
   switch (expectedType) {

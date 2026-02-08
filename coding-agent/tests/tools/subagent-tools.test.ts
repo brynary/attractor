@@ -1,7 +1,8 @@
 import { describe, test, expect } from "bun:test";
 import { StubExecutionEnvironment } from "../stubs/stub-env.js";
 import type { ExecutionEnvironment } from "../../src/types/index.js";
-import type { SubAgentHandle, SessionFactory, SubAgentDepthConfig } from "../../src/tools/subagent-tools.js";
+import { SessionState, DEFAULT_SESSION_CONFIG } from "../../src/types/index.js";
+import type { SubAgentHandle, SessionFactory, SubAgentDepthConfig, SubAgentSessionView } from "../../src/tools/subagent-tools.js";
 import {
   createSpawnAgentTool,
   createSendInputTool,
@@ -24,9 +25,16 @@ function createMockFactory(): {
   handle: SubAgentHandle;
 } {
   const submitted: string[] = [];
+  const session: SubAgentSessionView = {
+    id: "session-1",
+    state: SessionState.IDLE,
+    history: [],
+    config: DEFAULT_SESSION_CONFIG,
+  };
   const handle: SubAgentHandle = {
     id: "agent-1",
     status: "running",
+    session,
     submit: async (input: string) => {
       submitted.push(input);
     },

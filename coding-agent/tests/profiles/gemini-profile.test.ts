@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { StubExecutionEnvironment } from "../stubs/stub-env.js";
 import { createGeminiProfile } from "../../src/profiles/gemini-profile.js";
+import { SessionState, DEFAULT_SESSION_CONFIG } from "../../src/types/index.js";
 
 describe("createGeminiProfile", () => {
   const profile = createGeminiProfile("gemini-2.5-pro");
@@ -97,6 +98,7 @@ describe("createGeminiProfile", () => {
     const factory = async () => ({
       id: "agent-1",
       status: "running" as const,
+      session: { id: "s-1", state: SessionState.IDLE, history: [] as const, config: DEFAULT_SESSION_CONFIG },
       submit: async () => {},
       waitForCompletion: async () => ({ output: "", success: true, turnsUsed: 0 }),
       close: async () => {},
@@ -167,5 +169,14 @@ describe("createGeminiProfile", () => {
     expect(result).toContain("=== /exists.ts ===");
     expect(result).toContain("=== /missing.ts ===");
     expect(result).toContain("[ERROR:");
+  });
+
+  test("supports overriding base prompt for strict provider alignment", () => {
+    const custom = createGeminiProfile("gemini-2.5-pro", {
+      basePrompt: "CUSTOM_GEMINI_PROMPT",
+    });
+    const env = new StubExecutionEnvironment();
+    const prompt = custom.buildSystemPrompt(env, "");
+    expect(prompt).toContain("CUSTOM_GEMINI_PROMPT");
   });
 });

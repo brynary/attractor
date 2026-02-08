@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { StubExecutionEnvironment } from "../stubs/stub-env.js";
 import { createOpenAIProfile } from "../../src/profiles/openai-profile.js";
+import { SessionState, DEFAULT_SESSION_CONFIG } from "../../src/types/index.js";
 
 describe("createOpenAIProfile", () => {
   const profile = createOpenAIProfile("o3");
@@ -64,6 +65,7 @@ describe("createOpenAIProfile", () => {
     const factory = async () => ({
       id: "agent-1",
       status: "running" as const,
+      session: { id: "s-1", state: SessionState.IDLE, history: [] as const, config: DEFAULT_SESSION_CONFIG },
       submit: async () => {},
       waitForCompletion: async () => ({ output: "", success: true, turnsUsed: 0 }),
       close: async () => {},
@@ -98,5 +100,12 @@ describe("createOpenAIProfile", () => {
     expect(shellTool).toBeDefined();
     const result = await shellTool!.executor({ command: "test-cmd" }, env);
     expect(result).toContain("timed out after 10000ms");
+  });
+
+  test("supports overriding base prompt for strict provider alignment", () => {
+    const custom = createOpenAIProfile("o3", { basePrompt: "CUSTOM_OPENAI_PROMPT" });
+    const env = new StubExecutionEnvironment();
+    const prompt = custom.buildSystemPrompt(env, "");
+    expect(prompt).toContain("CUSTOM_OPENAI_PROMPT");
   });
 });

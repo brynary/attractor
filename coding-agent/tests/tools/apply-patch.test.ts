@@ -61,6 +61,41 @@ describe("parsePatch", () => {
     expect(ops[0]?.hunks?.[0]?.contextHint).toBe("export function main");
     expect(ops[0]?.hunks?.[0]?.lines.length).toBe(4);
   });
+
+  test("parses update file operation with bare @@ hunk header", () => {
+    const patch = `*** Begin Patch
+*** Update File: src/main.ts
+@@
+-old line
++new line
+*** End Patch`;
+    const ops = parsePatch(patch);
+    expect(ops.length).toBe(1);
+    expect(ops[0]?.kind).toBe("update");
+    expect(ops[0]?.hunks?.length).toBe(1);
+    expect(ops[0]?.hunks?.[0]?.contextHint).toBe("");
+  });
+
+  test("throws when add file operation has no + lines", () => {
+    const patch = `*** Begin Patch
+*** Add File: src/empty.ts
+*** End Patch`;
+    expect(() => parsePatch(patch)).toThrow("must contain at least one '+' line");
+  });
+
+  test("throws when update file has no hunks", () => {
+    const patch = `*** Begin Patch
+*** Update File: src/main.ts
+*** End Patch`;
+    expect(() => parsePatch(patch)).toThrow("requires at least one hunk");
+  });
+
+  test("throws on unexpected top-level line", () => {
+    const patch = `*** Begin Patch
+invalid line
+*** End Patch`;
+    expect(() => parsePatch(patch)).toThrow('unexpected line "invalid line"');
+  });
 });
 
 describe("applyPatch", () => {
