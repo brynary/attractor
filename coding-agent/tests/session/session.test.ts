@@ -303,7 +303,10 @@ describe("Session", () => {
     const steeringTurns = session.history.filter((t) => t.kind === "steering");
     expect(steeringTurns.length).toBeGreaterThanOrEqual(1);
     const loopWarning = steeringTurns.find(
-      (t) => t.kind === "steering" && t.content.includes("Loop detected"),
+      (t) =>
+        t.kind === "steering" &&
+        t.content ===
+          "Loop detected: the last 3 tool calls follow a repeating pattern. Try a different approach.",
     );
     expect(loopWarning).toBeDefined();
   });
@@ -324,18 +327,11 @@ describe("Session", () => {
       { files },
     );
 
-    // Close immediately — the abort signal will be checked in the loop
+    // Close immediately — the session transitions to CLOSED
     await session.close();
 
-    // Submit should bail early because abort is signaled
-    await session.submit("do stuff");
-
-    // The state after submit is IDLE (set at the end of processInput)
-    // But the history should be short since it bailed after the user turn was added
-    const assistantTurns = session.history.filter(
-      (t) => t.kind === "assistant",
-    );
-    expect(assistantTurns).toHaveLength(0);
+    // Submit should throw because session is CLOSED
+    expect(() => session.submit("do stuff")).toThrow("Cannot submit to a closed session");
   });
 
   test("tool error returns isError=true result", async () => {
@@ -430,8 +426,9 @@ describe("Session", () => {
     const events = await eventsPromise;
     const kinds = events.map((e) => e.kind);
 
-    // SESSION_START is emitted during construction before events() is called,
-    // so the consumer may miss it. Verify the other lifecycle events.
+    // SESSION_START is emitted during construction and buffered by EventEmitter
+    // until the first consumer registers, so it is replayed here.
+    expect(kinds).toContain(EventKind.SESSION_START);
     expect(kinds).toContain(EventKind.USER_INPUT);
     expect(kinds).toContain(EventKind.ASSISTANT_TEXT_END);
     expect(kinds).toContain(EventKind.INPUT_COMPLETE);
@@ -530,12 +527,13 @@ describe("Session", () => {
     );
 
     await session.close();
-    await session.submit("do stuff");
 
     expect(session.state).toBe(SessionState.CLOSED);
+    // Submit after close should throw
+    expect(() => session.submit("do stuff")).toThrow("Cannot submit to a closed session");
   });
 
-  test("LLM error transitions to CLOSED state", async () => {
+  test("transient LLM error transitions to IDLE (host can retry)", async () => {
     const adapter = new StubAdapter("anthropic", [
       { error: new Error("LLM exploded") },
     ]);
@@ -549,6 +547,42 @@ describe("Session", () => {
     });
 
     await session.submit("trigger error");
+
+    expect(session.state).toBe(SessionState.IDLE);
+  });
+
+  test("unrecoverable LLM error (auth) transitions to CLOSED", async () => {
+    const adapter = new StubAdapter("anthropic", [
+      { error: new Error("401 Unauthorized: invalid api key") },
+    ]);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    await session.submit("trigger auth error");
+
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
+  test("unrecoverable LLM error (context overflow) transitions to CLOSED", async () => {
+    const adapter = new StubAdapter("anthropic", [
+      { error: new Error("context_length_exceeded: maximum context length is 200000") },
+    ]);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    await session.submit("trigger context overflow");
 
     expect(session.state).toBe(SessionState.CLOSED);
   });
@@ -727,9 +761,9 @@ describe("Session", () => {
     expect(session.state).toBe(SessionState.CLOSED);
   });
 
-  test("LLM error path calls close() for subagent cleanup", async () => {
+  test("unrecoverable LLM error path calls close() for subagent cleanup", async () => {
     const adapter = new StubAdapter("anthropic", [
-      { error: new Error("LLM exploded") },
+      { error: new Error("401 Unauthorized") },
     ]);
     const client = new Client({ providers: { anthropic: adapter } });
     const profile = createAnthropicProfile("test-model");
@@ -772,17 +806,10 @@ describe("Session", () => {
     } as import("../../src/tools/subagent-tools.js").SubAgentHandle);
 
     await session.close();
-    // Reset the flag since close() already cleaned up
-    subagentClosed = false;
-    session.subagents.set("test-agent-2", {
-      close: async () => { subagentClosed = true; },
-    } as import("../../src/tools/subagent-tools.js").SubAgentHandle);
-
-    // Submit after abort — processInput detects abort and calls close()
-    // But close() is idempotent so it won't re-emit SESSION_END
-    await session.submit("do stuff");
 
     expect(session.state).toBe(SessionState.CLOSED);
+    expect(subagentClosed).toBe(true);
+    expect(session.subagents.size).toBe(0);
   });
 
   test("question response transitions to AWAITING_INPUT state", async () => {
@@ -833,5 +860,139 @@ describe("Session", () => {
     expect(kinds).toContain(EventKind.ASSISTANT_TEXT_START);
     expect(kinds).not.toContain(EventKind.ASSISTANT_TEXT_DELTA);
     expect(kinds).toContain(EventKind.ASSISTANT_TEXT_END);
+  });
+
+  test("submit() throws when session is PROCESSING", async () => {
+    const { session } = createTestSession([makeTextResponse("hi")]);
+
+    // Manually set state to PROCESSING to simulate concurrent submit
+    session.state = SessionState.PROCESSING;
+
+    expect(() => session.submit("second")).toThrow("Cannot submit while session is processing");
+  });
+
+  test("SESSION_START event is delivered to late consumer via buffering", async () => {
+    const { session } = createTestSession([makeTextResponse("hi")]);
+
+    // events() is called after construction, so SESSION_START was already emitted
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
+    await session.submit("test");
+
+    const events = await eventsPromise;
+    expect(events[0]?.kind).toBe(EventKind.SESSION_START);
+  });
+
+  test("ASSISTANT_TEXT_END includes reasoning field (non-streaming)", async () => {
+    const response: LLMResponse = {
+      id: "resp-1",
+      model: "test-model",
+      provider: "anthropic",
+      message: {
+        role: Role.ASSISTANT,
+        content: [
+          { kind: "thinking", thinking: { text: "I thought about this carefully", redacted: false } },
+          { kind: "text", text: "answer" },
+        ],
+      },
+      finishReason: { reason: "stop" },
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      warnings: [],
+    };
+    const adapter = new StubAdapter("anthropic", [{ response }]);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
+    await session.submit("think about this");
+
+    const events = await eventsPromise;
+    const endEvent = events.find((e) => e.kind === EventKind.ASSISTANT_TEXT_END);
+    expect(endEvent?.data["reasoning"]).toBe("I thought about this carefully");
+  });
+
+  test("LOOP_DETECTION event data includes message field", async () => {
+    const files = new Map([["/test/x.ts", "x"]]);
+    const sameToolCall = makeToolCallResponse([
+      {
+        id: "tc1",
+        name: "read_file",
+        arguments: { file_path: "/test/x.ts" },
+      },
+    ]);
+    const { session } = createTestSession(
+      [
+        sameToolCall,
+        sameToolCall,
+        sameToolCall,
+        sameToolCall,
+        sameToolCall,
+        makeTextResponse("done"),
+      ],
+      {
+        files,
+        config: {
+          enableLoopDetection: true,
+          loopDetectionWindow: 3,
+        },
+      },
+    );
+
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
+    await session.submit("keep going");
+
+    const events = await eventsPromise;
+    const loopEvent = events.find((e) => e.kind === EventKind.LOOP_DETECTION);
+    expect(loopEvent).toBeDefined();
+    expect(loopEvent?.data["message"]).toBe(
+      "Loop detected: the last 3 tool calls follow a repeating pattern. Try a different approach.",
+    );
+  });
+
+  test("context warning event includes message field", async () => {
+    const largeContent = "x".repeat(640_004);
+    const { session } = createTestSession(
+      [makeTextResponse(largeContent)],
+    );
+
+    const eventsPromise = collectEvents(session, EventKind.INPUT_COMPLETE);
+    await session.submit("generate big response");
+
+    const events = await eventsPromise;
+    const contextWarning = events.find(
+      (e) => e.kind === EventKind.WARNING && e.data.type === "context_warning",
+    );
+    expect(contextWarning).toBeDefined();
+    expect(typeof contextWarning?.data["message"]).toBe("string");
+    expect(contextWarning?.data["message"]).toContain("Context usage at ~");
+    expect(contextWarning?.data["message"]).toContain("% of context window");
+  });
+
+  test("transient LLM error emits ERROR event but allows retry", async () => {
+    const adapter = new StubAdapter("anthropic", [
+      { error: new Error("rate limit exceeded") },
+      { response: makeTextResponse("recovered") },
+    ]);
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    const env = new StubExecutionEnvironment();
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: env,
+      llmClient: client,
+    });
+
+    await session.submit("first try");
+    expect(session.state).toBe(SessionState.IDLE);
+
+    // Host can retry after transient error
+    await session.submit("retry");
+    expect(session.state).toBe(SessionState.IDLE);
+    expect(session.history.filter((t) => t.kind === "assistant")).toHaveLength(1);
   });
 });

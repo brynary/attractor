@@ -1,7 +1,7 @@
-import { mkdir, readdir, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile as fsReadFile, stat } from "node:fs/promises";
 import { spawn as nodeSpawn } from "node:child_process";
 import { release } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, relative } from "node:path";
 import type {
   ExecutionEnvironment,
   ExecResult,
@@ -21,7 +21,7 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
 
   constructor(options: LocalEnvOptions) {
     this.workingDir = options.workingDir;
-    this.envVarPolicy = options.envVarPolicy ?? "inherit_core_only";
+    this.envVarPolicy = options.envVarPolicy ?? "exclude_sensitive";
   }
 
   private resolvePath(path: string): string {
@@ -111,7 +111,7 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
     // Use node:child_process with detached to create a process group,
     // so we can kill the entire tree on timeout (not just the shell).
     const isWindows = process.platform === "win32";
-    const shellCmd = isWindows ? "cmd.exe" : "bash";
+    const shellCmd = isWindows ? "cmd.exe" : "/bin/bash";
     const shellArgs = isWindows ? ["/c", command] : ["-c", command];
 
     const proc = nodeSpawn(shellCmd, shellArgs, {
@@ -211,6 +211,20 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
     options?: GrepOptions,
   ): Promise<string> {
     const resolvedPath = this.resolvePath(path);
+
+    const rgResult = await this.grepWithRipgrep(pattern, resolvedPath, options);
+    if (rgResult !== null) {
+      return rgResult;
+    }
+
+    return this.grepNative(pattern, resolvedPath, options);
+  }
+
+  private async grepWithRipgrep(
+    pattern: string,
+    resolvedPath: string,
+    options?: GrepOptions,
+  ): Promise<string | null> {
     const mode = options?.outputMode ?? "content";
     const modeFlag =
       mode === "files_with_matches" ? "--files-with-matches" :
@@ -232,7 +246,114 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
     const command = args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ");
 
     const result = await this.execCommand(command, 30_000);
+
+    // Exit code 127 means command not found; also check stderr for common not-found messages
+    if (result.exitCode === 127 || result.stderr.includes("not found")) {
+      return null;
+    }
+
     return result.stdout;
+  }
+
+  private async grepNative(
+    pattern: string,
+    resolvedPath: string,
+    options?: GrepOptions,
+  ): Promise<string> {
+    const flags = options?.caseInsensitive ? "i" : "";
+    const regex = new RegExp(pattern, flags);
+    const mode = options?.outputMode ?? "content";
+    const maxResults = options?.maxResults;
+    const globFilter = options?.globFilter;
+
+    const filePaths = await this.collectFiles(resolvedPath, globFilter);
+    const outputLines: string[] = [];
+
+    for (const filePath of filePaths) {
+      if (maxResults !== undefined && outputLines.length >= maxResults) break;
+
+      let content: string;
+      try {
+        content = await fsReadFile(filePath, "utf-8");
+      } catch {
+        continue;
+      }
+
+      const lines = content.split("\n");
+      let fileMatchCount = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        if (maxResults !== undefined && outputLines.length >= maxResults) break;
+
+        const line = lines[i];
+        if (line !== undefined && regex.test(line)) {
+          fileMatchCount++;
+          const relPath = relative(resolvedPath, filePath);
+
+          if (mode === "content") {
+            outputLines.push(`${relPath}:${i + 1}:${line}`);
+          } else if (mode === "files_with_matches") {
+            outputLines.push(relPath);
+            break; // only need one match per file for this mode
+          }
+        }
+      }
+
+      if (mode === "count" && fileMatchCount > 0) {
+        const relPath = relative(resolvedPath, filePath);
+        outputLines.push(`${relPath}:${fileMatchCount}`);
+      }
+    }
+
+    return outputLines.join("\n") + (outputLines.length > 0 ? "\n" : "");
+  }
+
+  private async collectFiles(dir: string, globFilter?: string): Promise<string[]> {
+    const results: string[] = [];
+    const globMatcher = globFilter ? new Bun.Glob(globFilter) : null;
+
+    async function walk(currentDir: string): Promise<void> {
+      let entries: string[];
+      try {
+        entries = await readdir(currentDir);
+      } catch {
+        return;
+      }
+      for (const name of entries) {
+        const fullPath = join(currentDir, name);
+        let stats;
+        try {
+          stats = await stat(fullPath);
+        } catch {
+          continue;
+        }
+        if (stats.isDirectory()) {
+          await walk(fullPath);
+        } else if (stats.isFile()) {
+          if (globMatcher) {
+            const relPath = relative(dir, fullPath);
+            if (!globMatcher.match(relPath)) continue;
+          }
+          results.push(fullPath);
+        }
+      }
+    }
+
+    // resolvedPath could be a file, not a directory
+    let pathStat;
+    try {
+      pathStat = await stat(dir);
+    } catch {
+      return results;
+    }
+
+    if (pathStat.isFile()) {
+      results.push(dir);
+    } else {
+      await walk(dir);
+    }
+
+    return results;
   }
 
   async glob(pattern: string, path?: string): Promise<string[]> {

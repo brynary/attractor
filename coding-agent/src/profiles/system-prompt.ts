@@ -11,12 +11,21 @@ export function buildEnvironmentContext(
   const lines = [
     "<environment>",
     `Working directory: ${env.workingDirectory()}`,
+    `Is git repository: ${options?.isGitRepo ? "true" : "false"}`,
+    `Git branch: ${options?.gitBranch || "(none)"}`,
     `Platform: ${env.platform()}`,
     `OS version: ${env.osVersion()}`,
     `Today's date: ${date}`,
   ];
-  lines.push(`Is git repository: ${options?.isGitRepo ? "true" : "false"}`);
-  lines.push(`Git branch: ${options?.gitBranch || "(none)"}`);
+  if (options?.modelDisplayName) {
+    lines.push(`Model: ${options.modelDisplayName}`);
+  }
+  if (options?.knowledgeCutoff) {
+    lines.push(`Knowledge cutoff: ${options.knowledgeCutoff}`);
+  }
+  lines.push("</environment>");
+
+  // Git context snapshot (section 6.4) -- separate from environment block
   if (options?.modifiedCount !== undefined) {
     lines.push(`Modified files: ${options.modifiedCount}`);
   }
@@ -29,13 +38,6 @@ export function buildEnvironmentContext(
       lines.push(`  ${commit}`);
     }
   }
-  if (options?.modelDisplayName) {
-    lines.push(`Model: ${options.modelDisplayName}`);
-  }
-  if (options?.knowledgeCutoff) {
-    lines.push(`Knowledge cutoff: ${options.knowledgeCutoff}`);
-  }
-  lines.push("</environment>");
   return lines.join("\n");
 }
 

@@ -19,6 +19,10 @@ The old_string must match the file content exactly, including whitespace and ind
 - If a shell command fails, inspect the output, diagnose the issue, and try a different approach rather than repeating the same command.
 - After making code changes, run relevant tests to verify correctness.
 
+## Project Instructions
+
+Follow project-specific instructions from CLAUDE.md files when present. These files may appear at the project root or in subdirectories and contain conventions, rules, and preferences for the codebase.
+
 ## Code Quality
 
 - Read existing code to understand conventions before writing new code.

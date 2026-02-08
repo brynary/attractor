@@ -33,7 +33,7 @@ export function createAnthropicProfile(
   registry.register(createWriteFileTool());
   registry.register(createEditFileTool());
   registry.register(
-    createShellTool({ defaultTimeoutMs: 120_000, maxTimeoutMs: 600_000 }),
+    createShellTool({ defaultTimeoutMs: 10_000, maxTimeoutMs: 600_000 }),
   );
   registry.register(createGrepTool());
   registry.register(createGlobTool());

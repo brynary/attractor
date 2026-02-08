@@ -1,4 +1,5 @@
-import type { ExecutionEnvironment, RegisteredTool, Turn } from "../types/index.js";
+import type { ExecutionEnvironment, RegisteredTool, Turn, SessionConfig } from "../types/index.js";
+import { SessionState } from "../types/index.js";
 
 export interface SubAgentResult {
   output: string;
@@ -6,9 +7,19 @@ export interface SubAgentResult {
   turnsUsed: number;
 }
 
+/** Read-only view of a Session exposed on SubAgentHandle to avoid circular imports. */
+export interface SubAgentSessionView {
+  readonly id: string;
+  readonly state: SessionState;
+  readonly history: readonly Turn[];
+  readonly config: Readonly<SessionConfig>;
+}
+
 export interface SubAgentHandle {
   id: string;
   status: "running" | "completed" | "failed";
+  /** The child session instance (read-only view). */
+  session?: SubAgentSessionView;
   submit: (input: string) => Promise<void>;
   waitForCompletion: () => Promise<SubAgentResult>;
   close: () => Promise<void>;

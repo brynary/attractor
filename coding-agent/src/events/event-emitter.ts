@@ -8,8 +8,15 @@ interface Consumer {
 
 export class EventEmitter {
   private consumers: Consumer[] = [];
+  /** Events emitted before any consumer has registered. Replayed to the first consumer. */
+  private preConsumerBuffer: SessionEvent[] = [];
 
   emit(event: SessionEvent): void {
+    if (this.consumers.length === 0) {
+      this.preConsumerBuffer.push(event);
+      return;
+    }
+
     for (const consumer of this.consumers) {
       if (consumer.closed) continue;
 
@@ -26,6 +33,13 @@ export class EventEmitter {
     // Register the consumer eagerly so events emitted before
     // the first next() call are captured in the queue.
     const consumer: Consumer = { queue: [], waiters: [], closed: false };
+
+    // Replay any buffered events from before the first consumer registered
+    if (this.preConsumerBuffer.length > 0) {
+      consumer.queue.push(...this.preConsumerBuffer);
+      this.preConsumerBuffer.length = 0;
+    }
+
     this.consumers.push(consumer);
     const consumers = this.consumers;
 

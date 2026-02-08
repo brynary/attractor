@@ -30,6 +30,12 @@ describe("createAnthropicProfile", () => {
     expect(prompt).toContain("Claude");
   });
 
+  test("system prompt mentions CLAUDE.md project instructions", () => {
+    const env = new StubExecutionEnvironment();
+    const prompt = profile.buildSystemPrompt(env, "");
+    expect(prompt).toContain("CLAUDE.md");
+  });
+
   test("system prompt includes environment context", () => {
     const env = new StubExecutionEnvironment();
     const prompt = profile.buildSystemPrompt(env, "");
@@ -93,7 +99,7 @@ describe("createAnthropicProfile", () => {
     expect(profileWithSubagents.tools().length).toBe(10);
   });
 
-  test("shell tool uses 120s default timeout", async () => {
+  test("shell tool uses 10s default timeout", async () => {
     const env = new StubExecutionEnvironment({
       commandResults: new Map([
         [
@@ -103,7 +109,7 @@ describe("createAnthropicProfile", () => {
             stderr: "",
             exitCode: 0,
             timedOut: true,
-            durationMs: 120_000,
+            durationMs: 10_000,
           },
         ],
       ]),
@@ -111,6 +117,6 @@ describe("createAnthropicProfile", () => {
     const shellTool = profile.toolRegistry.get("shell");
     expect(shellTool).toBeDefined();
     const result = await shellTool!.executor({ command: "test-cmd" }, env);
-    expect(result).toContain("timed out after 120000ms");
+    expect(result).toContain("timed out after 10000ms");
   });
 });

@@ -253,6 +253,28 @@ describe("edit_file", () => {
     expect(content).toContain("const y = 2;");
   });
 
+  test("fuzzy match replaces all occurrences when replace_all is true", async () => {
+    const env = new StubExecutionEnvironment({
+      files: new Map([["/test/file.ts", "const  x  =  1;\nconst  x  =  1;\nconst y = 2;"]]),
+    });
+    const tool = createEditFileTool();
+    const result = await tool.executor(
+      {
+        file_path: "/test/file.ts",
+        old_string: "const x = 1;",
+        new_string: "const x = 42;",
+        replace_all: true,
+      },
+      env,
+    );
+    expect(result).toContain("Replaced 2 occurrence(s)");
+    expect(result).toContain("fuzzy match");
+
+    const content = await env.readFile("/test/file.ts");
+    expect(content).not.toContain("const  x  =  1;");
+    expect(content).toContain("const y = 2;");
+  });
+
   test("fuzzy match throws when neither exact nor normalized match found", async () => {
     const env = new StubExecutionEnvironment({
       files: new Map([["/test/file.ts", "const x = 1;"]]),
@@ -317,7 +339,7 @@ describe("shell", () => {
       maxTimeoutMs: 600000,
     });
     const result = await tool.executor({ command: "sleep 999" }, env);
-    expect(result).toContain("Command timed out after 10000ms");
+    expect(result).toContain("Command timed out after 10000ms. Partial output is shown above.\nYou can retry");
     expect(result).toContain("partial");
   });
 
@@ -388,6 +410,26 @@ describe("shell", () => {
       env,
       controller.signal,
     );
+    expect(result).toContain("[exit code: 0]");
+  });
+
+  test("uses spec defaults when no config provided", async () => {
+    const env = new StubExecutionEnvironment({
+      commandResults: new Map([
+        [
+          "echo hi",
+          {
+            stdout: "hi\n",
+            stderr: "",
+            exitCode: 0,
+            timedOut: false,
+            durationMs: 10,
+          },
+        ],
+      ]),
+    });
+    const tool = createShellTool();
+    const result = await tool.executor({ command: "echo hi" }, env);
     expect(result).toContain("[exit code: 0]");
   });
 

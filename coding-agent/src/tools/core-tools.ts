@@ -53,7 +53,7 @@ export function createReadFileTool(): RegisteredTool {
         type: "object",
         properties: {
           file_path: { type: "string", description: "Absolute path to the file to read" },
-          offset: { type: "integer", description: "Line offset to start reading from" },
+          offset: { type: "integer", description: "1-based line number to start reading from" },
           limit: {
             type: "integer",
             description: "Maximum number of lines to read",
@@ -183,25 +183,42 @@ export function createEditFileTool(): RegisteredTool {
         throw new Error(`old_string not found in ${filePath}`);
       }
 
-      const normalizedPos = normalizedContent.indexOf(normalizedOld);
-      const normalizedLines = normalizedContent.slice(0, normalizedPos).split("\n");
-      const startLine = normalizedLines.length - 1;
-      const oldLines = normalizedOld.split("\n");
-      const endLine = startLine + oldLines.length;
+      // Find all fuzzy match positions in the normalized content
       const originalLines = rawContent.split("\n");
-      const matchedOriginal = originalLines.slice(startLine, endLine).join("\n");
+      let newContent = rawContent;
+      let replacedCount = 0;
+      let searchFrom = 0;
 
-      const newContent = rawContent.replace(matchedOriginal, newString);
+      while (true) {
+        const normalizedPos = normalizedContent.indexOf(normalizedOld, searchFrom);
+        if (normalizedPos < 0) break;
+
+        const normalizedLines = normalizedContent.slice(0, normalizedPos).split("\n");
+        const startLine = normalizedLines.length - 1;
+        const oldLines = normalizedOld.split("\n");
+        const endLine = startLine + oldLines.length;
+        const matchedOriginal = originalLines.slice(startLine, endLine).join("\n");
+
+        newContent = newContent.replace(matchedOriginal, newString);
+        replacedCount++;
+
+        if (!replaceAll) break;
+
+        searchFrom = normalizedPos + normalizedOld.length;
+      }
+
       await env.writeFile(filePath, newContent);
-      return `Replaced 1 occurrence in ${filePath} (fuzzy match)`;
+      return `Replaced ${replacedCount} occurrence(s) in ${filePath} (fuzzy match)`;
     },
   };
 }
 
-export function createShellTool(config: {
-  defaultTimeoutMs: number;
-  maxTimeoutMs: number;
+export function createShellTool(config?: {
+  defaultTimeoutMs?: number;
+  maxTimeoutMs?: number;
 }): RegisteredTool {
+  const defaultTimeoutMs = config?.defaultTimeoutMs ?? 10_000;
+  const maxTimeoutMs = config?.maxTimeoutMs ?? 600_000;
   return {
     definition: {
       name: "shell",
@@ -226,8 +243,8 @@ export function createShellTool(config: {
       const command = args.command as string;
       const requestedTimeout = args.timeout_ms as number | undefined;
       const timeout = Math.min(
-        requestedTimeout ?? config.defaultTimeoutMs,
-        config.maxTimeoutMs,
+        requestedTimeout ?? defaultTimeoutMs,
+        maxTimeoutMs,
       );
 
       if (signal?.aborted) {
@@ -247,7 +264,7 @@ export function createShellTool(config: {
 
       if (result.timedOut) {
         parts.push(
-          `[ERROR: Command timed out after ${timeout}ms. Partial output is shown above. You can retry with a longer timeout by setting the timeout_ms parameter.]`,
+          `[ERROR: Command timed out after ${timeout}ms. Partial output is shown above.\nYou can retry with a longer timeout by setting the timeout_ms parameter.]`,
         );
       }
 
@@ -305,7 +322,7 @@ export function createGlobTool(): RegisteredTool {
   return {
     definition: {
       name: "glob",
-      description: "Find files matching a glob pattern.",
+      description: "Find files matching a glob pattern, sorted by modification time (newest first).",
       parameters: {
         type: "object",
         properties: {

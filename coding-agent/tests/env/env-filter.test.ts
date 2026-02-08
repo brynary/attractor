@@ -208,8 +208,8 @@ describe("filterEnvironmentVariables with inherit_none policy", () => {
   });
 });
 
-describe("filterEnvironmentVariables with inherit_core_only policy", () => {
-  const policy: EnvVarPolicy = "inherit_core_only";
+describe("filterEnvironmentVariables with exclude_sensitive policy", () => {
+  const policy: EnvVarPolicy = "exclude_sensitive";
 
   test("filters sensitive vars and includes safe ones (same as default)", () => {
     const result = filterEnvironmentVariables(

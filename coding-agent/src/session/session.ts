@@ -73,6 +73,12 @@ export class Session {
   }
 
   async submit(input: string): Promise<void> {
+    if (this.state === SessionState.CLOSED) {
+      throw new Error("Cannot submit to a closed session");
+    }
+    if (this.state === SessionState.PROCESSING) {
+      throw new Error("Cannot submit while session is processing");
+    }
     this.state = SessionState.PROCESSING;
     await this.processInput(input);
   }
@@ -227,7 +233,9 @@ export class Session {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         this.emit(EventKind.ERROR, { error: errorMessage });
-        hadLLMError = true;
+        if (isUnrecoverableError(errorMessage)) {
+          hadLLMError = true;
+        }
         break;
       }
 
@@ -257,6 +265,7 @@ export class Session {
         this.emit(EventKind.ASSISTANT_TEXT_START);
         this.emit(EventKind.ASSISTANT_TEXT_END, {
           text,
+          reasoning,
           toolCallCount: toolCalls.length,
         });
       }
@@ -285,14 +294,14 @@ export class Session {
       // p. Loop detection
       if (this.config.enableLoopDetection) {
         if (detectLoop(this.history, this.config.loopDetectionWindow)) {
+          const warning = `Loop detected: the last ${this.config.loopDetectionWindow} tool calls follow a repeating pattern. Try a different approach.`;
           this.history.push({
             kind: "steering",
-            content:
-              "Loop detected: You appear to be repeating the same tool calls. Please try a different approach or explain what you are trying to accomplish.",
+            content: warning,
             timestamp: new Date(),
           });
           this.emit(EventKind.LOOP_DETECTION, {
-            windowSize: this.config.loopDetectionWindow,
+            message: warning,
           });
         }
       }
@@ -417,7 +426,9 @@ export class Session {
       // b. Execute
       const rawOutput = await tool.executor(args, this.executionEnv, toolAbortController.signal);
 
-      // b2. Emit output delta
+      // b2. Emit output delta (batch emit of full output, not truly incremental
+      //     streaming; tool execution is non-streaming so the full output is
+      //     emitted as a single delta)
       this.emit(EventKind.TOOL_CALL_OUTPUT_DELTA, {
         call_id: toolCall.id,
         delta: rawOutput,
@@ -489,6 +500,7 @@ export class Session {
     if (emittedTextStart) {
       this.emit(EventKind.ASSISTANT_TEXT_END, {
         text: fullText,
+        reasoning: responseReasoning(response) || null,
         toolCallCount: responseToolCalls(response).length,
       });
     }
@@ -526,11 +538,13 @@ export class Session {
     const estimatedTokens = totalChars / 4;
     const threshold = this.providerProfile.contextWindowSize * 0.8;
     if (estimatedTokens > threshold) {
+      const usagePercent = Math.round((estimatedTokens / this.providerProfile.contextWindowSize) * 100);
       this.emit(EventKind.WARNING, {
         type: "context_warning",
         estimatedTokens,
         contextWindowSize: this.providerProfile.contextWindowSize,
-        usagePercent: Math.round((estimatedTokens / this.providerProfile.contextWindowSize) * 100),
+        usagePercent,
+        message: `Context usage at ~${usagePercent}% of context window`,
       });
     }
   }
@@ -595,4 +609,23 @@ export class Session {
         return [];
     }
   }
+}
+
+/** Returns true if the error indicates an unrecoverable failure (auth, context overflow). */
+function isUnrecoverableError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("authentication") ||
+    lower.includes("auth") ||
+    lower.includes("unauthorized") ||
+    lower.includes("403") ||
+    lower.includes("401") ||
+    lower.includes("invalid api key") ||
+    lower.includes("invalid_api_key") ||
+    lower.includes("context_length_exceeded") ||
+    lower.includes("context overflow") ||
+    lower.includes("context window") ||
+    lower.includes("max_tokens") ||
+    lower.includes("maximum context length")
+  );
 }

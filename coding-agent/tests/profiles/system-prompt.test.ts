@@ -67,6 +67,69 @@ describe("buildEnvironmentContext", () => {
     expect(result).toContain("Is git repository: false");
     expect(result).toContain("Git branch: (none)");
   });
+
+  test("field order matches spec: working dir, git repo, git branch, platform, os, date, model, cutoff", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, {
+      isGitRepo: true,
+      gitBranch: "main",
+      modelDisplayName: "claude-opus-4-6",
+      knowledgeCutoff: "May 2025",
+    });
+
+    const workingDirIdx = result.indexOf("Working directory:");
+    const isGitIdx = result.indexOf("Is git repository:");
+    const gitBranchIdx = result.indexOf("Git branch:");
+    const platformIdx = result.indexOf("Platform:");
+    const osIdx = result.indexOf("OS version:");
+    const dateIdx = result.indexOf("Today's date:");
+    const modelIdx = result.indexOf("Model:");
+    const cutoffIdx = result.indexOf("Knowledge cutoff:");
+
+    expect(workingDirIdx).toBeLessThan(isGitIdx);
+    expect(isGitIdx).toBeLessThan(gitBranchIdx);
+    expect(gitBranchIdx).toBeLessThan(platformIdx);
+    expect(platformIdx).toBeLessThan(osIdx);
+    expect(osIdx).toBeLessThan(dateIdx);
+    expect(dateIdx).toBeLessThan(modelIdx);
+    expect(modelIdx).toBeLessThan(cutoffIdx);
+  });
+
+  test("git context fields appear after </environment> tag", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, {
+      isGitRepo: true,
+      gitBranch: "main",
+      modifiedCount: 3,
+      untrackedCount: 1,
+      recentCommits: ["abc1234 fix bug"],
+    });
+
+    const envCloseIdx = result.indexOf("</environment>");
+    const modifiedIdx = result.indexOf("Modified files:");
+    const untrackedIdx = result.indexOf("Untracked files:");
+    const commitsIdx = result.indexOf("Recent commits:");
+
+    expect(envCloseIdx).toBeGreaterThan(0);
+    expect(modifiedIdx).toBeGreaterThan(envCloseIdx);
+    expect(untrackedIdx).toBeGreaterThan(envCloseIdx);
+    expect(commitsIdx).toBeGreaterThan(envCloseIdx);
+  });
+
+  test("model and knowledge cutoff are inside environment block", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, {
+      modelDisplayName: "claude-opus-4-6",
+      knowledgeCutoff: "May 2025",
+    });
+
+    const envCloseIdx = result.indexOf("</environment>");
+    const modelIdx = result.indexOf("Model:");
+    const cutoffIdx = result.indexOf("Knowledge cutoff:");
+
+    expect(modelIdx).toBeLessThan(envCloseIdx);
+    expect(cutoffIdx).toBeLessThan(envCloseIdx);
+  });
 });
 
 describe("discoverProjectDocs", () => {

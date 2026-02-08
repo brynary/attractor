@@ -1,4 +1,4 @@
-export type EnvVarPolicy = "inherit_all" | "inherit_none" | "inherit_core_only";
+export type EnvVarPolicy = "inherit_all" | "inherit_none" | "exclude_sensitive";
 
 const SENSITIVE_PATTERNS: RegExp[] = [
   /_API_KEY$/i,
@@ -57,7 +57,7 @@ function isSensitive(key: string): boolean {
 
 export function filterEnvironmentVariables(
   env: Record<string, string | undefined>,
-  policy: EnvVarPolicy = "inherit_core_only",
+  policy: EnvVarPolicy = "exclude_sensitive",
 ): Record<string, string> {
   const result: Record<string, string> = {};
 
@@ -74,7 +74,7 @@ export function filterEnvironmentVariables(
           result[key] = value;
         }
         break;
-      case "inherit_core_only":
+      case "exclude_sensitive":
         if (ALWAYS_INCLUDE.has(key) || !isSensitive(key)) {
           result[key] = value;
         }
