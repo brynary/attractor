@@ -34,12 +34,44 @@ describe("getModelInfo", () => {
     const model = getModelInfo("gpt-5.2");
     expect(model?.contextWindow).toBe(1_047_576);
   });
+
+  test("finds Gemini models by id", () => {
+    const pro = getModelInfo("gemini-3-pro-preview");
+    expect(pro).toBeDefined();
+    expect(pro?.provider).toBe("gemini");
+    expect(pro?.displayName).toBe("Gemini 3 Pro Preview");
+
+    const flash = getModelInfo("gemini-3-flash-preview");
+    expect(flash).toBeDefined();
+    expect(flash?.provider).toBe("gemini");
+    expect(flash?.displayName).toBe("Gemini 3 Flash Preview");
+  });
+
+  test("finds Gemini models by alias", () => {
+    expect(getModelInfo("gemini-pro")?.id).toBe("gemini-3-pro-preview");
+    expect(getModelInfo("gemini-3-pro")?.id).toBe("gemini-3-pro-preview");
+    expect(getModelInfo("gemini-flash")?.id).toBe("gemini-3-flash-preview");
+    expect(getModelInfo("gemini-3-flash")?.id).toBe("gemini-3-flash-preview");
+  });
+
+  test("Gemini models have correct context window and max output", () => {
+    const model = getModelInfo("gemini-3-pro-preview");
+    expect(model?.contextWindow).toBe(1_048_576);
+    expect(model?.maxOutput).toBe(65_536);
+  });
+
+  test("Gemini models support tools, vision, and reasoning", () => {
+    const model = getModelInfo("gemini-3-pro-preview");
+    expect(model?.supportsTools).toBe(true);
+    expect(model?.supportsVision).toBe(true);
+    expect(model?.supportsReasoning).toBe(true);
+  });
 });
 
 describe("listModels", () => {
   test("lists all models when no provider specified", () => {
     const models = listModels();
-    expect(models.length).toBeGreaterThanOrEqual(5);
+    expect(models.length).toBeGreaterThanOrEqual(7);
   });
 
   test("filters by provider", () => {
@@ -50,6 +82,10 @@ describe("listModels", () => {
     const openaiModels = listModels("openai");
     expect(openaiModels).toHaveLength(3);
     expect(openaiModels.every((m) => m.provider === "openai")).toBe(true);
+
+    const geminiModels = listModels("gemini");
+    expect(geminiModels).toHaveLength(2);
+    expect(geminiModels.every((m) => m.provider === "gemini")).toBe(true);
   });
 
   test("returns empty array for unknown provider", () => {

@@ -9,3 +9,5 @@ export { OpenAIAdapter } from "./providers/openai/index.js";
 export type { OpenAIAdapterOptions } from "./providers/openai/index.js";
 export { OpenAICompatibleAdapter } from "./providers/openai-compatible/index.js";
 export type { OpenAICompatibleAdapterOptions } from "./providers/openai-compatible/index.js";
+export { GeminiAdapter } from "./providers/gemini/index.js";
+export type { GeminiAdapterOptions } from "./providers/gemini/index.js";

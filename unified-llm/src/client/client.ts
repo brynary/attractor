@@ -11,6 +11,7 @@ import {
 import { AnthropicAdapter } from "../providers/anthropic/index.js";
 import { OpenAIAdapter } from "../providers/openai/index.js";
 import { OpenAICompatibleAdapter } from "../providers/openai-compatible/index.js";
+import { GeminiAdapter } from "../providers/gemini/index.js";
 
 export interface ClientOptions {
   providers?: Record<string, ProviderAdapter>;
@@ -116,6 +117,18 @@ export class Client {
       );
     }
 
+    const geminiKey =
+      process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
+    if (geminiKey) {
+      client.registerProvider(
+        "gemini",
+        new GeminiAdapter({
+          apiKey: geminiKey,
+          baseUrl: process.env["GEMINI_BASE_URL"],
+        }),
+      );
+    }
+
     const compatBaseUrl = process.env["OPENAI_COMPATIBLE_BASE_URL"];
     if (compatBaseUrl) {
       client.registerProvider(
@@ -129,7 +142,7 @@ export class Client {
 
     if (client.providers.size === 0) {
       throw new ConfigurationError(
-        "No LLM provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENAI_COMPATIBLE_BASE_URL environment variable.",
+        "No LLM provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or OPENAI_COMPATIBLE_BASE_URL environment variable.",
       );
     }
 

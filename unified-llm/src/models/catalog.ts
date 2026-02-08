@@ -66,6 +66,32 @@ const models: ModelInfo[] = [
     outputCostPerMillion: 30,
     aliases: ["gpt-codex", "codex"],
   },
+  {
+    id: "gemini-3-pro-preview",
+    provider: "gemini",
+    displayName: "Gemini 3 Pro Preview",
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    inputCostPerMillion: 1.25,
+    outputCostPerMillion: 10,
+    aliases: ["gemini-pro", "gemini-3-pro"],
+  },
+  {
+    id: "gemini-3-flash-preview",
+    provider: "gemini",
+    displayName: "Gemini 3 Flash Preview",
+    contextWindow: 1_048_576,
+    maxOutput: 65_536,
+    supportsTools: true,
+    supportsVision: true,
+    supportsReasoning: true,
+    inputCostPerMillion: 0.3,
+    outputCostPerMillion: 2.5,
+    aliases: ["gemini-flash", "gemini-3-flash"],
+  },
 ];
 
 export function getModelInfo(
