@@ -546,6 +546,57 @@ describe("Session", () => {
     expect(session.state).toBe(SessionState.CLOSED);
   });
 
+  test("truncation config passes per-tool limits from session config", async () => {
+    // Create a file with content longer than 10 chars
+    const longContent = "x".repeat(100);
+    const files = new Map([["/test/big.ts", longContent]]);
+    const { session } = createTestSession(
+      [
+        makeToolCallResponse([
+          {
+            id: "tc1",
+            name: "read_file",
+            arguments: { file_path: "/test/big.ts" },
+          },
+        ]),
+        makeTextResponse("done"),
+      ],
+      {
+        files,
+        config: {
+          toolOutputLimits: { read_file: 20 },
+        },
+      },
+    );
+
+    await session.submit("read big file");
+
+    const toolResults = session.history.find((t) => t.kind === "tool_results");
+    expect(toolResults).toBeDefined();
+    if (toolResults?.kind === "tool_results") {
+      // The output should be truncated to ~20 chars (plus truncation markers)
+      const content = toolResults.results[0]?.content;
+      expect(typeof content).toBe("string");
+      if (typeof content === "string") {
+        expect(content).toContain("truncated");
+      }
+    }
+  });
+
+  test("abort signal is passed to LLM request", async () => {
+    const { session, adapter } = createTestSession([
+      makeTextResponse("response"),
+    ]);
+
+    await session.submit("test");
+
+    expect(adapter.calls).toHaveLength(1);
+    // The request should include an AbortSignal
+    const request = adapter.calls[0];
+    expect(request?.abortSignal).toBeDefined();
+    expect(request?.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
   test("context window warning emitted when usage exceeds 80%", async () => {
     // contextWindowSize for anthropic profile is 200_000 tokens
     // 80% threshold = 160_000 tokens

@@ -19,6 +19,7 @@ import type {
   SessionConfig,
   Turn,
   SessionEvent,
+  EnvironmentContextOptions,
 } from "../types/index.js";
 import { SessionState, EventKind, DEFAULT_SESSION_CONFIG } from "../types/index.js";
 import { EventEmitter } from "../events/event-emitter.js";
@@ -39,6 +40,7 @@ export class Session {
   private steeringQueue: string[];
   private followupQueue: string[];
   private abortController: AbortController;
+  private gitContext: { isGitRepo: boolean; branch?: string; gitRoot?: string } | null;
 
   constructor(options: {
     providerProfile: ProviderProfile;
@@ -57,6 +59,7 @@ export class Session {
     this.steeringQueue = [];
     this.followupQueue = [];
     this.abortController = new AbortController();
+    this.gitContext = null;
 
     this.emit(EventKind.SESSION_START);
   }
@@ -108,6 +111,11 @@ export class Session {
     // 3. Drain steering
     this.drainSteering();
 
+    // 3b. Gather git context (once per session)
+    if (this.gitContext === null) {
+      this.gitContext = await this.gatherGitContext();
+    }
+
     // 4. Loop
     let roundCount = 0;
     let hadLLMError = false;
@@ -141,10 +149,17 @@ export class Session {
       const projectDocs = await discoverProjectDocs(
         this.executionEnv,
         providerFileNames,
+        this.gitContext?.gitRoot,
       );
+      const envOptions: EnvironmentContextOptions = {
+        isGitRepo: this.gitContext?.isGitRepo,
+        gitBranch: this.gitContext?.branch,
+        modelDisplayName: this.providerProfile.model,
+      };
       const systemPrompt = this.providerProfile.buildSystemPrompt(
         this.executionEnv,
         projectDocs,
+        envOptions,
       );
 
       // e. Convert history to messages
@@ -168,6 +183,7 @@ export class Session {
           : {}),
         provider: this.providerProfile.id,
         ...(providerOptions ? { providerOptions } : {}),
+        abortSignal: this.abortController.signal,
       };
 
       // g. Call LLM
@@ -335,8 +351,8 @@ export class Session {
 
       // e. Truncate
       const truncatedOutput = truncateToolOutput(rawOutput, toolCall.name, {
-        toolOutputLimits: {},
-        toolLineLimits: {},
+        toolOutputLimits: this.config.toolOutputLimits,
+        toolLineLimits: this.config.toolLineLimits,
       });
 
       // f. Emit TOOL_CALL_END with full output
@@ -399,6 +415,33 @@ export class Session {
         contextWindowSize: this.providerProfile.contextWindowSize,
         usagePercent: Math.round((estimatedTokens / this.providerProfile.contextWindowSize) * 100),
       });
+    }
+  }
+
+  private async gatherGitContext(): Promise<{
+    isGitRepo: boolean;
+    branch?: string;
+    gitRoot?: string;
+  }> {
+    try {
+      const check = await this.executionEnv.execCommand(
+        "git rev-parse --is-inside-work-tree",
+        5_000,
+      );
+      if (check.exitCode !== 0) return { isGitRepo: false };
+
+      const [branchResult, rootResult] = await Promise.all([
+        this.executionEnv.execCommand("git branch --show-current", 5_000),
+        this.executionEnv.execCommand("git rev-parse --show-toplevel", 5_000),
+      ]);
+
+      return {
+        isGitRepo: true,
+        branch: branchResult.exitCode === 0 ? branchResult.stdout.trim() || undefined : undefined,
+        gitRoot: rootResult.exitCode === 0 ? rootResult.stdout.trim() || undefined : undefined,
+      };
+    } catch {
+      return { isGitRepo: false };
     }
   }
 

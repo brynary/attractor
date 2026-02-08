@@ -26,4 +26,4 @@ export type {
 export type { RegisteredTool } from "./tool-registry.js";
 export { ToolRegistry } from "./tool-registry.js";
 
-export type { ProviderProfile } from "./provider-profile.js";
+export type { ProviderProfile, EnvironmentContextOptions } from "./provider-profile.js";

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "unified-llm";
-import type { ExecutionEnvironment } from "../types/index.js";
+import type { ExecutionEnvironment, EnvironmentContextOptions } from "../types/index.js";
 import type { ProviderProfile } from "../types/index.js";
 import { ToolRegistry } from "../types/index.js";
 import {
@@ -55,8 +55,9 @@ export function createOpenAIProfile(
     buildSystemPrompt(
       environment: ExecutionEnvironment,
       projectDocs: string,
+      envOptions?: EnvironmentContextOptions,
     ): string {
-      const envContext = buildEnvironmentContext(environment);
+      const envContext = buildEnvironmentContext(environment, envOptions);
       const toolDescs = registry
         .definitions()
         .map((t) => `- ${t.name}: ${t.description}`)

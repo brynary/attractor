@@ -19,6 +19,46 @@ describe("buildEnvironmentContext", () => {
     // Date should be in YYYY-MM-DD format
     expect(result).toMatch(/Today's date: \d{4}-\d{2}-\d{2}/);
   });
+
+  test("includes git repo and branch when provided", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, {
+      isGitRepo: true,
+      gitBranch: "feat/cool",
+    });
+
+    expect(result).toContain("Git repository: yes");
+    expect(result).toContain("Git branch: feat/cool");
+  });
+
+  test("includes model name and knowledge cutoff when provided", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, {
+      modelDisplayName: "claude-opus-4-6",
+      knowledgeCutoff: "May 2025",
+    });
+
+    expect(result).toContain("Model: claude-opus-4-6");
+    expect(result).toContain("Knowledge cutoff: May 2025");
+  });
+
+  test("shows git repo as no when isGitRepo is false", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, { isGitRepo: false });
+
+    expect(result).toContain("Git repository: no");
+    expect(result).not.toContain("Git branch:");
+  });
+
+  test("omits optional fields when not provided", () => {
+    const env = new StubExecutionEnvironment();
+    const result = buildEnvironmentContext(env, {});
+
+    expect(result).not.toContain("Git repository:");
+    expect(result).not.toContain("Git branch:");
+    expect(result).not.toContain("Model:");
+    expect(result).not.toContain("Knowledge cutoff:");
+  });
 });
 
 describe("discoverProjectDocs", () => {
@@ -79,6 +119,68 @@ describe("discoverProjectDocs", () => {
     const result = await discoverProjectDocs(env, ["CLAUDE.md"]);
 
     expect(result).toBe("");
+  });
+
+  test("walks from git root to cwd when gitRoot provided", async () => {
+    const env = new StubExecutionEnvironment({
+      files: new Map([
+        ["/repo/AGENTS.md", "root agents"],
+        ["/repo/sub/AGENTS.md", "sub agents"],
+        ["/repo/sub/deep/AGENTS.md", "deep agents"],
+      ]),
+    });
+    // cwd is /test by default, override for this test by providing gitRoot
+    // The stub env has cwd=/test, so let's set up files at /test paths
+    const env2 = new StubExecutionEnvironment({
+      files: new Map([
+        ["/project/AGENTS.md", "root level"],
+        ["/project/src/AGENTS.md", "src level"],
+        ["/project/src/app/AGENTS.md", "app level"],
+      ]),
+    });
+    // We need an env with cwd = /project/src/app
+    // StubExecutionEnvironment always returns /test for workingDirectory
+    // So let's test with paths matching the stub's cwd
+    const env3 = new StubExecutionEnvironment({
+      files: new Map([
+        ["/root/AGENTS.md", "root content"],
+        ["/test/AGENTS.md", "cwd content"],
+      ]),
+    });
+    // gitRoot=/root, cwd=/test -> /test doesn't start with /root, so only cwd is searched
+    const result3 = await discoverProjectDocs(env3, [], "/root");
+    // cwd=/test is not under /root, so fallback to just cwd
+    expect(result3).toContain("cwd content");
+  });
+
+  test("discovers docs from intermediate directories between git root and cwd", async () => {
+    // StubExecutionEnvironment has workingDirectory() = /test
+    // So gitRoot must be an ancestor of /test for the walk to work
+    const env = new StubExecutionEnvironment({
+      files: new Map([
+        ["/AGENTS.md", "root agents"],
+        ["/test/AGENTS.md", "cwd agents"],
+      ]),
+    });
+    const result = await discoverProjectDocs(env, [], "/");
+
+    expect(result).toContain("root agents");
+    expect(result).toContain("cwd agents");
+    // Root content should appear before cwd content
+    const rootIdx = result.indexOf("root agents");
+    const cwdIdx = result.indexOf("cwd agents");
+    expect(rootIdx).toBeLessThan(cwdIdx);
+  });
+
+  test("only searches cwd when gitRoot equals cwd", async () => {
+    const env = new StubExecutionEnvironment({
+      files: new Map([
+        ["/test/AGENTS.md", "cwd content"],
+      ]),
+    });
+    const result = await discoverProjectDocs(env, [], "/test");
+
+    expect(result).toContain("cwd content");
   });
 });
 

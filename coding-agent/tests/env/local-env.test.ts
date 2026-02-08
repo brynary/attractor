@@ -120,6 +120,44 @@ describe("LocalExecutionEnvironment", () => {
     expect(result.timedOut).toBe(true);
   });
 
+  test("execCommand kills child processes on timeout", async () => {
+    // Spawn a command that creates a child process writing to a temp file
+    const markerFile = join(tempDir, "child-alive-marker");
+    // The child process writes to the marker file in a loop;
+    // after timeout + kill, the marker file should stop growing
+    const cmd = `bash -c 'while true; do echo alive >> "${markerFile}"; sleep 0.1; done' &
+wait`;
+    const result = await env.execCommand(cmd, 500);
+    expect(result.timedOut).toBe(true);
+
+    // Wait a bit for the child to be cleaned up
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Check that the child is no longer writing
+    const { stat: fsStat } = await import("node:fs/promises");
+    let size1: number;
+    try {
+      const s = await fsStat(markerFile);
+      size1 = s.size;
+    } catch {
+      // File might not exist if child was killed fast enough
+      size1 = 0;
+    }
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    let size2: number;
+    try {
+      const s = await fsStat(markerFile);
+      size2 = s.size;
+    } catch {
+      size2 = 0;
+    }
+
+    // The file should not have grown (child process is dead)
+    expect(size2).toBe(size1);
+  });
+
   test("glob finds matching files", async () => {
     const globDir = join(tempDir, "glob-test");
     const { mkdir } = await import("node:fs/promises");

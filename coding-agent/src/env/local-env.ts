@@ -1,4 +1,5 @@
 import { mkdir, readdir, stat } from "node:fs/promises";
+import { spawn as nodeSpawn } from "node:child_process";
 import { release } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import type {
@@ -103,43 +104,68 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
     const startTime = Date.now();
     let timedOut = false;
 
-    const proc = Bun.spawn(["bash", "-c", command], {
+    // Use node:child_process with detached to create a process group,
+    // so we can kill the entire tree on timeout (not just the shell).
+    const proc = nodeSpawn("bash", ["-c", command], {
       cwd,
       env,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
 
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    proc.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    proc.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    const killProcessGroup = (signal: NodeJS.Signals): void => {
+      try {
+        // Negative PID kills the entire process group
+        process.kill(-proc.pid!, signal);
+      } catch {
+        // Process group may already be dead
+      }
+    };
+
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const exitPromise = new Promise<number | null>((resolveExit) => {
+      proc.on("close", (code) => resolveExit(code));
+      proc.on("error", () => resolveExit(null));
+    });
+
     const timeoutPromise = new Promise<void>((resolvePromise) => {
       killTimer = setTimeout(() => {
         timedOut = true;
-        proc.kill("SIGTERM");
+        killProcessGroup("SIGTERM");
         // Force kill after 2 seconds if still alive
-        setTimeout(() => {
-          try {
-            proc.kill("SIGKILL");
-          } catch {
-            // Process may already be dead
-          }
+        forceKillTimer = setTimeout(() => {
+          killProcessGroup("SIGKILL");
         }, 2000);
         resolvePromise();
       }, timeoutMs);
     });
 
     // Wait for exit or timeout
-    await Promise.race([proc.exited, timeoutPromise]);
+    const exitCode = await Promise.race([
+      exitPromise,
+      timeoutPromise.then(() => null),
+    ]);
 
-    if (killTimer !== undefined) {
-      clearTimeout(killTimer);
+    if (killTimer !== undefined) clearTimeout(killTimer);
+    if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+
+    // If timed out, wait briefly for streams to flush
+    if (timedOut) {
+      await new Promise<void>((r) => setTimeout(r, 100));
     }
 
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = proc.exitCode ?? 1;
+    const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+    const stderr = Buffer.concat(stderrChunks).toString("utf-8");
     const durationMs = Date.now() - startTime;
 
-    return { stdout, stderr, exitCode, timedOut, durationMs };
+    return { stdout, stderr, exitCode: exitCode ?? 1, timedOut, durationMs };
   }
 
   async grep(
