@@ -319,6 +319,38 @@ describe("Anthropic request translator", () => {
     });
   });
 
+  test("handles invalid JSON tool call arguments without throwing", () => {
+    const request: Request = {
+      model: "claude-opus-4-6",
+      messages: [
+        {
+          role: Role.ASSISTANT,
+          content: [
+            {
+              kind: "tool_call",
+              toolCall: {
+                id: "tc_invalid",
+                name: "get_weather",
+                arguments: "{bad-json",
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const { body } = translateRequest(request);
+    const messages = body.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    const toolUse = messages.at(0)?.content.at(0);
+
+    expect(toolUse).toEqual({
+      type: "tool_use",
+      id: "tc_invalid",
+      name: "get_weather",
+      input: {},
+    });
+  });
+
   test("passes temperature, topP, and stopSequences", () => {
     const request: Request = {
       model: "claude-opus-4-6",

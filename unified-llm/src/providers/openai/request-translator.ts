@@ -90,7 +90,7 @@ function translateMessage(message: Message, warnings: Warning[]): Array<Record<s
             : JSON.stringify(part.toolCall.arguments);
         items.push({
           type: "function_call",
-          call_id: part.toolCall.id,
+          id: part.toolCall.id,
           name: part.toolCall.name,
           arguments: args,
         });

@@ -7,8 +7,8 @@ import type { Response, Usage } from "../types/response.js";
 import { addUsage, responseText, responseToolCalls, responseReasoning } from "../types/response.js";
 import type { TimeoutConfig, AdapterTimeout } from "../types/timeout.js";
 import { ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError, InvalidToolCallError } from "../types/errors.js";
-import { validateToolName } from "../utils/validate-tool-name.js";
 import { validateJsonSchema } from "../utils/validate-json-schema.js";
+import { validateToolDefinitions } from "../utils/validate-tools.js";
 import { retry } from "../utils/retry.js";
 import type { RetryPolicy } from "../utils/retry.js";
 import type { Client } from "../client/client.js";
@@ -144,20 +144,7 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
     );
   }
 
-  if (options.tools) {
-    for (const tool of options.tools) {
-      const nameError = validateToolName(tool.name);
-      if (nameError) {
-        throw new ConfigurationError(`Invalid tool name "${tool.name}": ${nameError}`);
-      }
-      const params = tool.parameters;
-      if (params["type"] !== "object") {
-        throw new ConfigurationError(
-          `Tool "${tool.name}" parameters must have "type": "object" at the root`,
-        );
-      }
-    }
-  }
+  validateToolDefinitions(options.tools);
 
   if (options.toolChoice) {
     const adapter = client.resolveProvider(options.provider);

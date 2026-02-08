@@ -15,6 +15,7 @@ import { AnthropicAdapter } from "../providers/anthropic/index.js";
 import { OpenAIAdapter } from "../providers/openai/index.js";
 import { OpenAICompatibleAdapter } from "../providers/openai-compatible/index.js";
 import { GeminiAdapter } from "../providers/gemini/index.js";
+import { validateToolDefinitions } from "../utils/validate-tools.js";
 
 export interface ClientOptions {
   providers?: Record<string, ProviderAdapter>;
@@ -65,7 +66,11 @@ export class Client {
 
   async complete(request: Request): Promise<Response> {
     const adapter = this.resolveProvider(request.provider);
-    const resolved = this.applyDefaultModel(request, adapter.name);
+    const withProvider = request.provider
+      ? request
+      : { ...request, provider: adapter.name };
+    const resolved = this.applyDefaultModel(withProvider, adapter.name);
+    validateToolDefinitions(resolved.tools);
     const handler = async (req: Request): Promise<Response> => {
       const response = await adapter.complete(req);
       return { ...response, provider: adapter.name };
@@ -76,7 +81,11 @@ export class Client {
 
   async *stream(request: Request): AsyncGenerator<StreamEvent> {
     const adapter = this.resolveProvider(request.provider);
-    const resolved = this.applyDefaultModel(request, adapter.name);
+    const withProvider = request.provider
+      ? request
+      : { ...request, provider: adapter.name };
+    const resolved = this.applyDefaultModel(withProvider, adapter.name);
+    validateToolDefinitions(resolved.tools);
     const baseHandler = (req: Request): AsyncGenerator<StreamEvent> =>
       adapter.stream(req);
     const chain = buildStreamMiddlewareChain(

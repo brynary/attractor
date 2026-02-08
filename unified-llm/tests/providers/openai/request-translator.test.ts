@@ -266,7 +266,7 @@ describe("OpenAI Request Translator", () => {
 
     expect(input[0]).toEqual({
       type: "function_call",
-      call_id: "call_123",
+      id: "call_123",
       name: "get_weather",
       arguments: '{"city":"SF"}',
     });

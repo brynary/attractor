@@ -14,3 +14,4 @@ export { resolveFileImages } from "./resolve-file-images.js";
 export { validateJsonSchema } from "./validate-json-schema.js";
 export { classifyByMessage } from "./error-classify.js";
 export { validateToolName } from "./validate-tool-name.js";
+export { validateToolDefinitions } from "./validate-tools.js";

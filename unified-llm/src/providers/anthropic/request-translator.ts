@@ -17,6 +17,23 @@ interface TranslatePartResult {
   warning?: Warning;
 }
 
+function parseToolCallArguments(
+  argumentsValue: Record<string, unknown> | string,
+): Record<string, unknown> {
+  if (typeof argumentsValue !== "string") {
+    return argumentsValue;
+  }
+  try {
+    const parsed: unknown = JSON.parse(argumentsValue);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Invalid tool argument JSON is handled at the tool loop layer as an error result.
+  }
+  return {};
+}
+
 function translateContentPart(
   part: ExtendedContentPart,
 ): TranslatePartResult {
@@ -57,10 +74,7 @@ function translateContentPart(
         warning: { message: "Document content parts are not supported by the Anthropic provider and were dropped", code: "unsupported_part" },
       };
     case "tool_call": {
-      const input =
-        typeof part.toolCall.arguments === "string"
-          ? JSON.parse(part.toolCall.arguments)
-          : part.toolCall.arguments;
+      const input = parseToolCallArguments(part.toolCall.arguments);
       return {
         translated: {
           type: "tool_use",

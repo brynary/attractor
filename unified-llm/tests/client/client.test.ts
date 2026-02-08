@@ -67,6 +67,7 @@ describe("Client", () => {
     const result = await client.complete(makeRequest("test-model"));
     expect(result.provider).toBe("my-provider");
     expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.provider).toBe("my-provider");
   });
 
   test("throws ConfigurationError when no provider found", async () => {
@@ -157,6 +158,7 @@ describe("Client", () => {
     }
 
     expect(events).toHaveLength(3);
+    expect(adapter.calls[0]?.provider).toBe("test");
     expect(events[0]).toEqual({
       type: StreamEventType.STREAM_START,
       model: "test",
@@ -424,6 +426,57 @@ describe("Client", () => {
       "mw2-done",
       "mw1-done",
     ]);
+  });
+
+  test("complete validates tool names in low-level API", async () => {
+    const adapter = new StubAdapter("test", [{ response: makeResponse("ok") }]);
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+    });
+
+    await expect(
+      client.complete({
+        ...makeRequest(),
+        tools: [
+          {
+            name: "bad-tool-name",
+            description: "invalid",
+            parameters: { type: "object" },
+          },
+        ],
+      }),
+    ).rejects.toThrow(ConfigurationError);
+  });
+
+  test("stream validates tool schema root in low-level API", async () => {
+    const adapter = new StubAdapter("test", [
+      {
+        events: [
+          { type: StreamEventType.STREAM_START, model: "test" },
+          { type: StreamEventType.FINISH, finishReason: { reason: "stop" } },
+        ],
+      },
+    ]);
+    const client = new Client({
+      providers: { test: adapter },
+      defaultProvider: "test",
+    });
+
+    await expect(async () => {
+      for await (const _event of client.stream({
+        ...makeRequest(),
+        tools: [
+          {
+            name: "bad_schema",
+            description: "invalid",
+            parameters: { type: "array", items: { type: "string" } },
+          },
+        ],
+      })) {
+        // consume
+      }
+    }).toThrow(ConfigurationError);
   });
 
   test("streaming middleware can modify request", async () => {

@@ -12,6 +12,23 @@ interface TranslatedRequest {
   warnings: Warning[];
 }
 
+function parseToolCallArguments(
+  argumentsValue: Record<string, unknown> | string,
+): Record<string, unknown> {
+  if (typeof argumentsValue !== "string") {
+    return argumentsValue;
+  }
+  try {
+    const parsed: unknown = JSON.parse(argumentsValue);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Invalid tool argument JSON is handled at the tool loop layer as an error result.
+  }
+  return {};
+}
+
 function translateContentPart(
   part: ExtendedContentPart,
   toolCallIdMap: Map<string, string>,
@@ -39,10 +56,7 @@ function translateContentPart(
       return undefined;
     }
     case "tool_call": {
-      const args =
-        typeof part.toolCall.arguments === "string"
-          ? JSON.parse(part.toolCall.arguments)
-          : part.toolCall.arguments;
+      const args = parseToolCallArguments(part.toolCall.arguments);
       toolCallIdMap.set(part.toolCall.id, part.toolCall.name);
       const callPart: Record<string, unknown> = {
         functionCall: {

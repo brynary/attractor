@@ -10,8 +10,8 @@ import { StreamAccumulator } from "../utils/stream-accumulator.js";
 import type { Client } from "../client/client.js";
 import { getDefaultClient } from "../client/default-client.js";
 import { AbortError, ConfigurationError, RequestTimeoutError, UnsupportedToolChoiceError, InvalidToolCallError, SDKError, StreamError } from "../types/errors.js";
-import { validateToolName } from "../utils/validate-tool-name.js";
 import { validateJsonSchema } from "../utils/validate-json-schema.js";
+import { validateToolDefinitions } from "../utils/validate-tools.js";
 import { retry } from "../utils/retry.js";
 import type { RetryPolicy } from "../utils/retry.js";
 import type { GenerateOptions, ToolExecutionContext } from "./generate.js";
@@ -86,6 +86,9 @@ class StreamResultImpl implements StreamResult {
         const event = result.value;
         self.events.push(event);
         accumulator.process(event);
+        if (event.type === StreamEventType.STEP_FINISH) {
+          accumulator.beginStep();
+        }
         return { value: event, done: false };
       },
     };
@@ -167,20 +170,7 @@ export function stream(options: StreamOptions): StreamResult {
     );
   }
 
-  if (options.tools) {
-    for (const tool of options.tools) {
-      const nameError = validateToolName(tool.name);
-      if (nameError) {
-        throw new ConfigurationError(`Invalid tool name "${tool.name}": ${nameError}`);
-      }
-      const params = tool.parameters;
-      if (params["type"] !== "object") {
-        throw new ConfigurationError(
-          `Tool "${tool.name}" parameters must have "type": "object" at the root`,
-        );
-      }
-    }
-  }
+  validateToolDefinitions(options.tools);
 
   if (options.toolChoice) {
     const adapter = client.resolveProvider(options.provider);
@@ -248,7 +238,8 @@ export function stream(options: StreamOptions): StreamResult {
         abortSignal: options.abortSignal,
       };
 
-      const accumulator = new StreamAccumulator(options.provider);
+      const accumulator = new StreamAccumulator(provider);
+      let roundFinishEvent: Extract<StreamEvent, { type: typeof StreamEventType.FINISH }> | undefined;
 
       // Use retry() to handle initial connection + first event read
       let firstEvent: StreamEvent | undefined;
@@ -266,11 +257,12 @@ export function stream(options: StreamOptions): StreamResult {
       firstEvent = connected.event;
       connectedStream = connected.stream;
 
-      // Yield the first event and remaining events
+      // Yield the first event and remaining events (suppress round FINISH;
+      // we emit a single final FINISH for the whole multi-step stream).
       if (firstEvent) {
         accumulator.process(firstEvent);
         if (firstEvent.type === StreamEventType.FINISH) {
-          yield { ...firstEvent, response: accumulator.response() };
+          roundFinishEvent = firstEvent;
         } else {
           yield firstEvent;
         }
@@ -282,7 +274,7 @@ export function stream(options: StreamOptions): StreamResult {
           for await (const event of connectedStream) {
             accumulator.process(event);
             if (event.type === StreamEventType.FINISH) {
-              yield { ...event, response: accumulator.response() };
+              roundFinishEvent = event;
             } else {
               yield event;
             }
@@ -311,6 +303,15 @@ export function stream(options: StreamOptions): StreamResult {
 
       const response = accumulator.response();
       totalUsageRef.current = addUsage(totalUsageRef.current, response.usage);
+      const buildFinishEvent = () => {
+        return {
+          type: StreamEventType.FINISH,
+          finishReason: roundFinishEvent?.finishReason ?? response.finishReason,
+          usage: roundFinishEvent?.usage ?? response.usage,
+          response,
+          raw: roundFinishEvent?.raw,
+        };
+      };
       const rawToolCalls = responseToolCalls(response);
       const hasToolCalls =
         response.finishReason.reason === "tool_calls" &&
@@ -347,6 +348,7 @@ export function stream(options: StreamOptions): StreamResult {
             warnings: response.warnings,
           };
           steps.push(step);
+          yield buildFinishEvent();
           break;
         }
 
@@ -465,12 +467,7 @@ export function stream(options: StreamOptions): StreamResult {
         steps.push(step);
 
         if (options.stopWhen && options.stopWhen(steps)) {
-          yield {
-            type: StreamEventType.FINISH,
-            finishReason: response.finishReason,
-            usage: response.usage,
-            response,
-          };
+          yield buildFinishEvent();
           break;
         }
 
@@ -480,6 +477,7 @@ export function stream(options: StreamOptions): StreamResult {
           messages.push(toolResultMessage(tr.toolCallId, tr.content, tr.isError));
         }
       } else {
+        yield buildFinishEvent();
         break;
       }
     }

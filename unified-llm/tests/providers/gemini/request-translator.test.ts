@@ -209,6 +209,37 @@ describe("Gemini request translator", () => {
     });
   });
 
+  test("handles invalid JSON tool call arguments without throwing", () => {
+    const request: Request = {
+      model: "gemini-3-pro-preview",
+      messages: [
+        {
+          role: Role.ASSISTANT,
+          content: [
+            {
+              kind: "tool_call",
+              toolCall: {
+                id: "tc_bad",
+                name: "get_weather",
+                arguments: "{bad-json",
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const { body } = translateRequest(request);
+    const contents = body.contents as Array<{ parts: Array<Record<string, unknown>> }>;
+
+    expect(contents.at(0)?.parts.at(0)).toEqual({
+      functionCall: {
+        name: "get_weather",
+        args: {},
+      },
+    });
+  });
+
   test("translates tool_result to functionResponse", () => {
     const request: Request = {
       model: "gemini-3-pro-preview",

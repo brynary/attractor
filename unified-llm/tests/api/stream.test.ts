@@ -790,6 +790,73 @@ describe("stream", () => {
     expect(secondStreamStart).toBeGreaterThan(stepFinishIndex);
   });
 
+  test("emits only one final FINISH event across multi-round tool streaming", async () => {
+    const round1Events: StreamEvent[] = [
+      { type: StreamEventType.STREAM_START, model: "test-model" },
+      {
+        type: StreamEventType.TOOL_CALL_START,
+        toolCallId: "tc-1",
+        toolName: "my_tool",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_DELTA,
+        toolCallId: "tc-1",
+        argumentsDelta: "{}",
+      },
+      {
+        type: StreamEventType.TOOL_CALL_END,
+        toolCallId: "tc-1",
+      },
+      {
+        type: StreamEventType.FINISH,
+        finishReason: { reason: "tool_calls" },
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+      },
+    ];
+
+    const round2Events = makeStreamEvents("Done");
+    const adapter = new StubAdapter("stub", [
+      { events: round1Events },
+      { events: round2Events },
+    ]);
+    const client = makeClient(adapter);
+
+    const result = stream({
+      model: "test-model",
+      prompt: "use tool",
+      tools: [
+        {
+          name: "my_tool",
+          description: "A tool",
+          parameters: { type: "object" },
+          execute: async () => "result",
+        },
+      ],
+      maxToolRounds: 2,
+      client,
+    });
+
+    const collected: StreamEvent[] = [];
+    for await (const event of result) {
+      collected.push(event);
+    }
+
+    const stepFinishEvents = collected.filter((e) => e.type === StreamEventType.STEP_FINISH);
+    expect(stepFinishEvents).toHaveLength(1);
+    const finishEvents = collected.filter((e) => e.type === StreamEventType.FINISH);
+    expect(finishEvents).toHaveLength(1);
+    const finish = finishEvents[0];
+    expect(finish?.type).toBe(StreamEventType.FINISH);
+    if (finish?.type === StreamEventType.FINISH) {
+      expect(finish.finishReason.reason).toBe("stop");
+      const textPart = finish.response?.message.content.find((p) => p.kind === "text");
+      expect(textPart).toBeDefined();
+      if (textPart?.kind === "text") {
+        expect(textPart.text).toBe("Done");
+      }
+    }
+  });
+
   test("unknown tools receive error results in streaming", async () => {
     const toolCallEvents: StreamEvent[] = [
       { type: StreamEventType.STREAM_START, model: "test-model" },
