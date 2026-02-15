@@ -5,6 +5,9 @@ import { StageStatus, createOutcome } from "../../src/types/outcome.js";
 import { Context } from "../../src/types/context.js";
 import { stringAttr, integerAttr, floatAttr } from "../../src/types/graph.js";
 import type { Node, Graph, Edge, AttributeValue } from "../../src/types/graph.js";
+import type { PipelineEvent } from "../../src/types/events.js";
+import { PipelineEventKind } from "../../src/types/events.js";
+import type { EventEmitter } from "../../src/engine/runner.js";
 
 function makeNode(id: string): Node {
   return { id, attributes: new Map() };
@@ -73,6 +76,10 @@ describe("ParallelHandler", () => {
     const contexts: Context[] = [];
     const executor: NodeExecutor = async (_nodeId, ctx) => {
       contexts.push(ctx);
+      const nested = ctx.get("nested") as { count: number } | undefined;
+      if (nested) {
+        nested.count += 1;
+      }
       return createOutcome({ status: StageStatus.SUCCESS });
     };
 
@@ -81,6 +88,7 @@ describe("ParallelHandler", () => {
     const edges = [makeEdge("parallel", "a"), makeEdge("parallel", "b")];
     const parentContext = new Context();
     parentContext.set("shared", "value");
+    parentContext.set("nested", { count: 0 });
 
     await handler.execute(node, parentContext, makeGraph(edges), "/tmp");
     // Each branch context should be a distinct clone
@@ -91,6 +99,8 @@ describe("ParallelHandler", () => {
     // But share same values
     expect(contexts[0]?.get("shared")).toBe("value");
     expect(contexts[1]?.get("shared")).toBe("value");
+    // Nested objects are deep-cloned so branch mutations do not leak.
+    expect((parentContext.get("nested") as { count: number }).count).toBe(0);
   });
 
   it("fails when no outgoing edges", async () => {
@@ -322,5 +332,140 @@ describe("ParallelHandler advanced policies", () => {
     expect(resultA?.notes).toBe("note-a");
     expect(resultA?.contextUpdates.key).toBe("a");
     expect(resultB?.status).toBe(StageStatus.FAIL);
+  });
+});
+
+function createStubEmitter(): { emitter: EventEmitter; events: PipelineEvent[] } {
+  const events: PipelineEvent[] = [];
+  const emitter: EventEmitter = { emit: (event) => { events.push(event); } };
+  return { emitter, events };
+}
+
+describe("ParallelHandler event emission", () => {
+  it("emits PARALLEL_STARTED, PARALLEL_BRANCH_STARTED/COMPLETED, and PARALLEL_COMPLETED for wait_all", async () => {
+    const { emitter, events } = createStubEmitter();
+    const executor: NodeExecutor = async () =>
+      createOutcome({ status: StageStatus.SUCCESS });
+
+    const handler = new ParallelHandler(executor, emitter, "test-pipeline");
+    const node = makeNode("p");
+    const edges = [makeEdge("p", "a"), makeEdge("p", "b")];
+    const context = new Context();
+
+    await handler.execute(node, context, makeGraph(edges), "/tmp");
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds[0]).toBe(PipelineEventKind.PARALLEL_STARTED);
+    expect(kinds[kinds.length - 1]).toBe(PipelineEventKind.PARALLEL_COMPLETED);
+
+    // Verify PARALLEL_STARTED data
+    const startEvent = events[0];
+    expect(startEvent?.data).toEqual({ branchCount: 2 });
+    expect(startEvent?.pipelineId).toBe("test-pipeline");
+
+    // Verify branch events: 2 started + 2 completed
+    const branchStarted = events.filter((e) => e.kind === PipelineEventKind.PARALLEL_BRANCH_STARTED);
+    const branchCompleted = events.filter((e) => e.kind === PipelineEventKind.PARALLEL_BRANCH_COMPLETED);
+    expect(branchStarted.length).toBe(2);
+    expect(branchCompleted.length).toBe(2);
+
+    // Verify PARALLEL_COMPLETED data
+    const completedEvent = events[events.length - 1];
+    expect(completedEvent?.data).toEqual({ successCount: 2, failureCount: 0 });
+  });
+
+  it("emits events for first_success policy", async () => {
+    const { emitter, events } = createStubEmitter();
+    const outcomes = new Map<string, StageStatus>([
+      ["a", StageStatus.SUCCESS],
+      ["b", StageStatus.SUCCESS],
+    ]);
+    const executor: NodeExecutor = async (nodeId) =>
+      createOutcome({ status: outcomes.get(nodeId) ?? StageStatus.FAIL });
+
+    const handler = new ParallelHandler(executor, emitter, "test-pipeline");
+    const attrs = new Map<string, AttributeValue>([
+      ["join_policy", stringAttr("first_success")],
+      ["max_parallel", integerAttr(1)],
+    ]);
+    const node = makeNodeWithAttrs("p", attrs);
+    const edges = [makeEdge("p", "a"), makeEdge("p", "b")];
+    const context = new Context();
+
+    await handler.execute(node, context, makeGraph(edges), "/tmp");
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds[0]).toBe(PipelineEventKind.PARALLEL_STARTED);
+    expect(kinds[kinds.length - 1]).toBe(PipelineEventKind.PARALLEL_COMPLETED);
+
+    const branchStarted = events.filter((e) => e.kind === PipelineEventKind.PARALLEL_BRANCH_STARTED);
+    expect(branchStarted.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("emits events for k_of_n policy", async () => {
+    const { emitter, events } = createStubEmitter();
+    const outcomes = new Map<string, StageStatus>([
+      ["a", StageStatus.SUCCESS],
+      ["b", StageStatus.FAIL],
+      ["c", StageStatus.SUCCESS],
+    ]);
+    const executor: NodeExecutor = async (nodeId) =>
+      createOutcome({ status: outcomes.get(nodeId) ?? StageStatus.FAIL });
+
+    const handler = new ParallelHandler(executor, emitter, "test-pipeline");
+    const attrs = new Map<string, AttributeValue>([
+      ["join_policy", stringAttr("k_of_n")],
+      ["join_k", integerAttr(2)],
+    ]);
+    const node = makeNodeWithAttrs("p", attrs);
+    const edges = [makeEdge("p", "a"), makeEdge("p", "b"), makeEdge("p", "c")];
+    const context = new Context();
+
+    await handler.execute(node, context, makeGraph(edges), "/tmp");
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds[0]).toBe(PipelineEventKind.PARALLEL_STARTED);
+    expect(kinds[kinds.length - 1]).toBe(PipelineEventKind.PARALLEL_COMPLETED);
+
+    const branchCompleted = events.filter((e) => e.kind === PipelineEventKind.PARALLEL_BRANCH_COMPLETED);
+    expect(branchCompleted.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not emit events when no emitter is provided", async () => {
+    const executor: NodeExecutor = async () =>
+      createOutcome({ status: StageStatus.SUCCESS });
+
+    const handler = new ParallelHandler(executor);
+    const node = makeNode("p");
+    const edges = [makeEdge("p", "a")];
+    const context = new Context();
+
+    // Should not throw
+    const outcome = await handler.execute(node, context, makeGraph(edges), "/tmp");
+    expect(outcome.status).toBe(StageStatus.SUCCESS);
+  });
+
+  it("reports branch success=false for failed branches", async () => {
+    const { emitter, events } = createStubEmitter();
+    const executor: NodeExecutor = async () =>
+      createOutcome({ status: StageStatus.FAIL, failureReason: "error" });
+
+    const handler = new ParallelHandler(executor, emitter, "test-pipeline");
+    const attrs = new Map<string, AttributeValue>([
+      ["error_policy", stringAttr("ignore")],
+    ]);
+    const node = makeNodeWithAttrs("p", attrs);
+    const edges = [makeEdge("p", "a")];
+    const context = new Context();
+
+    await handler.execute(node, context, makeGraph(edges), "/tmp");
+
+    const branchCompleted = events.filter((e) => e.kind === PipelineEventKind.PARALLEL_BRANCH_COMPLETED);
+    expect(branchCompleted.length).toBe(1);
+    expect(branchCompleted[0]?.data).toEqual({ branch: "a", success: false });
+
+    const completed = events.filter((e) => e.kind === PipelineEventKind.PARALLEL_COMPLETED);
+    expect(completed.length).toBe(1);
+    expect(completed[0]?.data).toEqual({ successCount: 0, failureCount: 1 });
   });
 });

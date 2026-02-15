@@ -185,6 +185,71 @@ describe("Attractor HTTP Server", () => {
     expect(qBody["question"]).toBeNull();
   });
 
+  test("human gate works even when wait.human is not pre-registered", async () => {
+    server = createServer({ runnerConfig: { handlerRegistry: makeRegistry() } });
+
+    const dotWithGate = `digraph gate_test {
+      start [shape=Mdiamond]
+      gate [shape=hexagon, label="Approve?"]
+      done [shape=box]
+      exit [shape=Msquare]
+      start -> gate
+      gate -> done [label="[A] Approve"]
+      done -> exit
+    }`;
+
+    const createRes = await fetch(`${baseUrl()}/pipelines`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dot: dotWithGate }),
+    });
+    expect(createRes.status).toBe(201);
+    const createBody = (await createRes.json()) as Record<string, unknown>;
+    const id = String(createBody["id"]);
+
+    let questionId = "";
+    let choice = "";
+    for (let i = 0; i < 50; i++) {
+      const qRes = await fetch(`${baseUrl()}/pipelines/${id}/questions`);
+      expect(qRes.status).toBe(200);
+      const qBody = (await qRes.json()) as {
+        id?: string;
+        question: null | { options: Array<{ key: string }> };
+      };
+      if (qBody.question && qBody.id) {
+        questionId = qBody.id;
+        choice = qBody.question.options[0]?.key ?? "A";
+        break;
+      }
+      await Bun.sleep(50);
+    }
+
+    expect(questionId.length > 0).toBe(true);
+
+    const answerRes = await fetch(
+      `${baseUrl()}/pipelines/${id}/questions/${questionId}/answer`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: choice }),
+      },
+    );
+    expect(answerRes.status).toBe(200);
+
+    let status = "running";
+    for (let i = 0; i < 60 && status === "running"; i++) {
+      const statusRes = await fetch(`${baseUrl()}/pipelines/${id}`);
+      expect(statusRes.status).toBe(200);
+      const statusBody = (await statusRes.json()) as { status: string };
+      status = statusBody.status;
+      if (status === "running") {
+        await Bun.sleep(50);
+      }
+    }
+
+    expect(status).toBe("completed");
+  });
+
   test("GET /pipelines/:id/context returns context after completion", async () => {
     server = createServer({ runnerConfig: { handlerRegistry: makeRegistry() } });
     const createRes = await fetch(`${baseUrl()}/pipelines`, {

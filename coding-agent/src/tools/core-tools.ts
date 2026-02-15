@@ -88,7 +88,8 @@ export function createReadFileTool(): RegisteredTool {
     executor: async (args, env) => {
       const filePath = args.file_path as string;
       const offset = args.offset as number | undefined;
-      const limit = args.limit as number | undefined;
+      // read_file defaults to 2000 lines; env.readFile() itself may read full files.
+      const limit = (args.limit as number | undefined) ?? 2000;
 
       if (isImageFile(filePath)) {
         const exists = await env.fileExists(filePath);

@@ -34,7 +34,7 @@ export class StubExecutionEnvironment implements ExecutionEnvironment {
       throw new Error(`File not found: ${path}`);
     }
     const lines = content.split("\n");
-    const startLine = offset ?? 0;
+    const startLine = offset !== undefined ? Math.max(0, offset - 1) : 0;
     const endLine = limit !== undefined ? startLine + limit : lines.length;
     const sliced = lines.slice(startLine, endLine);
     return sliced

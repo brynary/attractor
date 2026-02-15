@@ -30,11 +30,23 @@ describe("read_file", () => {
       { file_path: "/test/big.txt", offset: 2, limit: 3 },
       env,
     );
+    expect(result).toContain("  2 | line 1");
     expect(result).toContain("  3 | line 2");
     expect(result).toContain("  4 | line 3");
-    expect(result).toContain("  5 | line 4");
     expect(result).not.toContain("line 0");
-    expect(result).not.toContain("line 5");
+    expect(result).not.toContain("line 4");
+  });
+
+  test("defaults to 2000 lines when limit is omitted", async () => {
+    const lines = Array.from({ length: 2505 }, (_, i) => `line ${i + 1}`);
+    const env = new StubExecutionEnvironment({
+      files: new Map([["/test/huge.txt", lines.join("\n")]]),
+    });
+    const tool = createReadFileTool();
+    const result = await tool.executor({ file_path: "/test/huge.txt" }, env);
+
+    expect(result).toContain("2000 | line 2000");
+    expect(result).not.toContain("line 2001");
   });
 
   test("throws on nonexistent file", async () => {

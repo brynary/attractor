@@ -42,6 +42,15 @@ describe("LocalExecutionEnvironment", () => {
     expect(result).not.toContain("line 6");
   });
 
+  test("readFile without limit reads full file (not capped at 2000 lines)", async () => {
+    const lines = Array.from({ length: 2505 }, (_, i) => `line ${i + 1}`);
+    await fsWriteFile(join(tempDir, "full-read-test.txt"), lines.join("\n"));
+
+    const result = await env.readFile("full-read-test.txt");
+
+    expect(result).toContain("2505 | line 2505");
+  });
+
   test("readFile throws for nonexistent file", async () => {
     await expect(env.readFile("does-not-exist.txt")).rejects.toThrow(
       "File not found",

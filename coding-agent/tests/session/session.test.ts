@@ -827,6 +827,80 @@ describe("Session", () => {
     expect(session.state).toBe(SessionState.CLOSED);
   });
 
+  test("submit() with an already-aborted signal closes the session", async () => {
+    const { session } = createTestSession([makeTextResponse("unused")]);
+    const controller = new AbortController();
+    controller.abort();
+
+    await session.submit("should not run", { abortSignal: controller.signal });
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
+  test("abort() transitions session to CLOSED", async () => {
+    const { session } = createTestSession([makeTextResponse("hi")]);
+
+    await session.submit("hello");
+    expect(session.state).toBe(SessionState.IDLE);
+
+    await session.abort();
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
+  test("submit() abortSignal cancels an in-flight tool round", async () => {
+    let resolveStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    const adapter = new StubAdapter(
+      "anthropic",
+      [
+        {
+          response: makeToolCallResponse([
+            { id: "tc1", name: "slow_tool", arguments: {} },
+          ]),
+        },
+      ],
+    );
+    const client = new Client({ providers: { anthropic: adapter } });
+    const profile = createAnthropicProfile("test-model");
+    profile.toolRegistry.register({
+      definition: {
+        name: "slow_tool",
+        description: "waits until aborted",
+        parameters: { type: "object", properties: {} },
+      },
+      executor: async (_args, _env, signal) => {
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          if (signal?.aborted) {
+            resolve();
+            return;
+          }
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return "aborted";
+      },
+    });
+
+    const session = new Session({
+      providerProfile: profile,
+      executionEnv: new StubExecutionEnvironment(),
+      llmClient: client,
+    });
+
+    const controller = new AbortController();
+    const submitPromise = session.submit("run slow tool", {
+      abortSignal: controller.signal,
+    });
+
+    await started;
+    controller.abort();
+
+    await submitPromise;
+    expect(session.state).toBe(SessionState.CLOSED);
+  });
+
   test("unrecoverable LLM error path calls close() for subagent cleanup", async () => {
     const adapter = new StubAdapter("anthropic", [
       { error: new Error("401 Unauthorized") },

@@ -2,9 +2,12 @@ import type { Handler } from "../types/handler.js";
 import type { Node, Graph, Edge, AttributeValue } from "../types/graph.js";
 import type { Context } from "../types/context.js";
 import type { Outcome } from "../types/outcome.js";
+import type { EventEmitter } from "../engine/runner.js";
+import type { PipelineEventKind, PipelineEventDataMap } from "../types/events.js";
 import { outgoingEdges, getStringAttr, getIntegerAttr } from "../types/graph.js";
 import { StageStatus, createOutcome } from "../types/outcome.js";
 import { JoinPolicy, ErrorPolicy, parseJoinPolicy, parseErrorPolicy } from "../types/parallel.js";
+import { PipelineEventKind as EventKind } from "../types/events.js";
 
 export type NodeExecutor = (
   nodeId: string,
@@ -65,9 +68,23 @@ function resolveJoinK(joinPolicy: JoinPolicy, joinK: number, total: number): num
 
 export class ParallelHandler implements Handler {
   private readonly nodeExecutor: NodeExecutor;
+  private readonly eventEmitter: EventEmitter | undefined;
+  private readonly pipelineId: string;
 
-  constructor(nodeExecutor: NodeExecutor) {
+  constructor(nodeExecutor: NodeExecutor, eventEmitter?: EventEmitter, pipelineId?: string) {
     this.nodeExecutor = nodeExecutor;
+    this.eventEmitter = eventEmitter;
+    this.pipelineId = pipelineId ?? "";
+  }
+
+  private emitEvent<K extends PipelineEventKind>(kind: K, data: PipelineEventDataMap[K]): void {
+    if (!this.eventEmitter) return;
+    this.eventEmitter.emit({
+      kind,
+      timestamp: new Date(),
+      pipelineId: this.pipelineId,
+      data,
+    });
   }
 
   async execute(node: Node, context: Context, graph: Graph, logsRoot: string): Promise<Outcome> {
@@ -79,6 +96,8 @@ export class ParallelHandler implements Handler {
         failureReason: "No outgoing edges for parallel node",
       });
     }
+
+    this.emitEvent(EventKind.PARALLEL_STARTED, { branchCount: branches.length });
 
     const joinPolicy = parseJoinPolicy(getStringAttr(node.attributes, "join_policy", JoinPolicy.WAIT_ALL));
     const errorPolicy = parseErrorPolicy(getStringAttr(node.attributes, "error_policy", ErrorPolicy.CONTINUE));
@@ -121,10 +140,12 @@ export class ParallelHandler implements Handler {
       }
 
       try {
+        this.emitEvent(EventKind.PARALLEL_BRANCH_STARTED, { branch: branch.to });
         const branchContext = context.clone();
         const outcome = await this.nodeExecutor(branch.to, branchContext, graph, logsRoot);
 
-        if (outcome.status === StageStatus.FAIL) {
+        const branchSuccess = outcome.status !== StageStatus.FAIL;
+        if (!branchSuccess) {
           failCount++;
           if (errorPolicy === ErrorPolicy.FAIL_FAST) {
             aborted = true;
@@ -134,6 +155,7 @@ export class ParallelHandler implements Handler {
         }
 
         results.push({ nodeId: branch.to, outcome });
+        this.emitEvent(EventKind.PARALLEL_BRANCH_COMPLETED, { branch: branch.to, success: branchSuccess });
       } finally {
         semaphore.release();
       }
@@ -143,7 +165,10 @@ export class ParallelHandler implements Handler {
 
     this.storeResults(results, context);
 
+    const completedData = { successCount, failureCount: failCount };
+
     if (errorPolicy === ErrorPolicy.IGNORE) {
+      this.emitEvent(EventKind.PARALLEL_COMPLETED, completedData);
       return createOutcome({
         status: StageStatus.SUCCESS,
         notes: "All " + String(results.length) + " branches completed (errors ignored)",
@@ -151,6 +176,7 @@ export class ParallelHandler implements Handler {
     }
 
     if (failCount === 0) {
+      this.emitEvent(EventKind.PARALLEL_COMPLETED, completedData);
       return createOutcome({
         status: StageStatus.SUCCESS,
         notes: "All " + String(successCount) + " branches completed successfully",
@@ -158,6 +184,7 @@ export class ParallelHandler implements Handler {
     }
 
     if (errorPolicy === ErrorPolicy.FAIL_FAST) {
+      this.emitEvent(EventKind.PARALLEL_COMPLETED, completedData);
       return createOutcome({
         status: StageStatus.FAIL,
         failureReason: "Branch failed with fail_fast policy",
@@ -165,6 +192,7 @@ export class ParallelHandler implements Handler {
       });
     }
 
+    this.emitEvent(EventKind.PARALLEL_COMPLETED, completedData);
     return createOutcome({
       status: StageStatus.PARTIAL_SUCCESS,
       notes: String(successCount) + " of " + String(results.length) + " branches succeeded",
@@ -201,6 +229,7 @@ export class ParallelHandler implements Handler {
               });
             });
           this.storeResults(results, context);
+          this.emitEvent(EventKind.PARALLEL_COMPLETED, { successCount: 1, failureCount: completedCount - 1 });
           resolve(createOutcome({
             status: StageStatus.SUCCESS,
             notes: "First success from branch " + successResult.nodeId,
@@ -211,6 +240,7 @@ export class ParallelHandler implements Handler {
         if (completedCount === branches.length) {
           resolved = true;
           this.storeResults(results, context);
+          this.emitEvent(EventKind.PARALLEL_COMPLETED, { successCount: 0, failureCount: completedCount });
           resolve(createOutcome({
             status: StageStatus.FAIL,
             failureReason: "No branch succeeded",
@@ -244,14 +274,17 @@ export class ParallelHandler implements Handler {
           }
 
           try {
+            this.emitEvent(EventKind.PARALLEL_BRANCH_STARTED, { branch: branch.to });
             const branchContext = context.clone();
             const outcome = await this.nodeExecutor(branch.to, branchContext, graph, logsRoot);
             results.push({ nodeId: branch.to, outcome });
+            this.emitEvent(EventKind.PARALLEL_BRANCH_COMPLETED, { branch: branch.to, success: outcome.status !== StageStatus.FAIL });
           } catch {
             results.push({
               nodeId: branch.to,
               outcome: createOutcome({ status: StageStatus.FAIL, failureReason: "Branch threw" }),
             });
+            this.emitEvent(EventKind.PARALLEL_BRANCH_COMPLETED, { branch: branch.to, success: false });
           } finally {
             semaphore.release();
             completedCount++;
@@ -285,6 +318,7 @@ export class ParallelHandler implements Handler {
         if (successCount >= requiredSuccesses) {
           resolved = true;
           this.storeResults(results, context);
+          this.emitEvent(EventKind.PARALLEL_COMPLETED, { successCount, failureCount: completedCount - successCount });
           resolve(createOutcome({
             status: StageStatus.SUCCESS,
             notes: String(successCount) + " of " + String(branches.length) + " branches succeeded (required: " + String(requiredSuccesses) + ")",
@@ -296,6 +330,7 @@ export class ParallelHandler implements Handler {
         if (remaining + successCount < requiredSuccesses) {
           resolved = true;
           this.storeResults(results, context);
+          this.emitEvent(EventKind.PARALLEL_COMPLETED, { successCount, failureCount: completedCount - successCount });
           resolve(createOutcome({
             status: StageStatus.FAIL,
             failureReason: "Cannot reach " + String(requiredSuccesses) + " successes: " + String(successCount) + " succeeded, " + String(remaining) + " remaining",
@@ -307,6 +342,7 @@ export class ParallelHandler implements Handler {
         if (completedCount === branches.length) {
           resolved = true;
           this.storeResults(results, context);
+          this.emitEvent(EventKind.PARALLEL_COMPLETED, { successCount, failureCount: completedCount - successCount });
           // All done but we didn't reach the threshold
           resolve(createOutcome({
             status: StageStatus.FAIL,
@@ -329,17 +365,21 @@ export class ParallelHandler implements Handler {
           }
 
           try {
+            this.emitEvent(EventKind.PARALLEL_BRANCH_STARTED, { branch: branch.to });
             const branchContext = context.clone();
             const outcome = await this.nodeExecutor(branch.to, branchContext, graph, logsRoot);
             results.push({ nodeId: branch.to, outcome });
-            if (outcome.status !== StageStatus.FAIL) {
+            const branchSuccess = outcome.status !== StageStatus.FAIL;
+            if (branchSuccess) {
               successCount++;
             }
+            this.emitEvent(EventKind.PARALLEL_BRANCH_COMPLETED, { branch: branch.to, success: branchSuccess });
           } catch {
             results.push({
               nodeId: branch.to,
               outcome: createOutcome({ status: StageStatus.FAIL, failureReason: "Branch threw" }),
             });
+            this.emitEvent(EventKind.PARALLEL_BRANCH_COMPLETED, { branch: branch.to, success: false });
           } finally {
             semaphore.release();
             completedCount++;

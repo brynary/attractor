@@ -2,13 +2,14 @@ import { randomUUID } from "crypto";
 import type { Graph } from "../types/graph.js";
 import type { Checkpoint } from "../types/checkpoint.js";
 import type { PipelineResult, PipelineRunnerConfig } from "../engine/runner.js";
-import { PipelineRunner } from "../engine/runner.js";
+import { PipelineRunner, createHandlerRegistry } from "../engine/runner.js";
 import { PipelineEventEmitter } from "../events/emitter.js";
 import { parse } from "../parser/index.js";
 import { createSSEStream } from "./sse.js";
 import { WebInterviewer } from "../interviewer/web.js";
 import { createAnswer } from "../types/interviewer.js";
 import { StageStatus } from "../types/outcome.js";
+import { WaitForHumanHandler } from "../handlers/wait-human.js";
 
 export interface PipelineRecord {
   id: string;
@@ -87,9 +88,21 @@ async function handlePostPipeline(
   };
   ctx.pipelines.set(id, record);
 
+  // Build a per-run registry so human-gate nodes can work even when the
+  // base server registry did not explicitly register wait.human.
+  const runHandlerRegistry = createHandlerRegistry();
+  for (const [typeString, handler] of ctx.runnerConfig.handlerRegistry.handlers) {
+    runHandlerRegistry.register(typeString, handler);
+  }
+  runHandlerRegistry.defaultHandler = ctx.runnerConfig.handlerRegistry.defaultHandler;
+  if (!runHandlerRegistry.handlers.has("wait.human")) {
+    runHandlerRegistry.register("wait.human", new WaitForHumanHandler(interviewer, emitter, id));
+  }
+
   // Run pipeline in background
   const runner = new PipelineRunner({
     ...ctx.runnerConfig,
+    handlerRegistry: runHandlerRegistry,
     eventEmitter: emitter,
     interviewer,
     abortSignal: abortController.signal,

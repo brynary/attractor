@@ -66,9 +66,11 @@ export class LocalExecutionEnvironment implements ExecutionEnvironment {
     const allLines = text.split("\n");
 
     // offset is 1-based
-    const startLine = offset !== undefined ? offset - 1 : 0;
-    const lineLimit = limit ?? 2000;
-    const lines = allLines.slice(startLine, startLine + lineLimit);
+    const startLine = offset !== undefined ? Math.max(0, offset - 1) : 0;
+    const lines =
+      limit !== undefined
+        ? allLines.slice(startLine, startLine + limit)
+        : allLines.slice(startLine);
 
     const lastLineNumber = startLine + lines.length;
     const padWidth = String(lastLineNumber).length;

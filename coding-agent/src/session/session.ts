@@ -118,15 +118,38 @@ export class Session {
     this.emit(EventKind.SESSION_START);
   }
 
-  async submit(input: string): Promise<void> {
+  async submit(
+    input: string,
+    options?: { abortSignal?: AbortSignal },
+  ): Promise<void> {
     if (this.state === SessionState.CLOSED) {
       throw new Error("Cannot submit to a closed session");
     }
     if (this.state === SessionState.PROCESSING) {
       throw new Error("Cannot submit while session is processing");
     }
-    this.state = SessionState.PROCESSING;
-    await this.processInput(input);
+    const externalAbortSignal = options?.abortSignal;
+    const onExternalAbort = () => {
+      void this.close();
+    };
+    if (externalAbortSignal?.aborted) {
+      await this.close();
+      return;
+    }
+    if (externalAbortSignal) {
+      externalAbortSignal.addEventListener("abort", onExternalAbort, {
+        once: true,
+      });
+    }
+
+    try {
+      this.state = SessionState.PROCESSING;
+      await this.processInput(input);
+    } finally {
+      if (externalAbortSignal) {
+        externalAbortSignal.removeEventListener("abort", onExternalAbort);
+      }
+    }
   }
 
   steer(message: string): void {
@@ -150,6 +173,10 @@ export class Session {
     }
     this.closingPromise = this.performClose();
     return this.closingPromise;
+  }
+
+  async abort(): Promise<void> {
+    return this.close();
   }
 
   private async performClose(): Promise<void> {
@@ -218,18 +245,6 @@ export class Session {
     let hadLLMError = false;
 
     while (true) {
-      // 5a. Rebuild system prompt each tool round so project docs stay fresh
-      const projectDocs = await discoverProjectDocs(
-        this.executionEnv,
-        providerFileNames,
-        this.gitContext?.gitRoot,
-      );
-      const systemPrompt = this.providerProfile.buildSystemPrompt(
-        this.executionEnv,
-        projectDocs,
-        envOptions,
-        this.config.userInstructions,
-      );
       // a. Check max tool rounds
       if (roundCount >= this.config.maxToolRoundsPerInput) {
         this.emit(EventKind.TURN_LIMIT, {
@@ -252,6 +267,19 @@ export class Session {
       if (this.abortController.signal.aborted) {
         break;
       }
+
+      // 5a. Rebuild system prompt each tool round so project docs stay fresh
+      const projectDocs = await discoverProjectDocs(
+        this.executionEnv,
+        providerFileNames,
+        this.gitContext?.gitRoot,
+      );
+      const systemPrompt = this.providerProfile.buildSystemPrompt(
+        this.executionEnv,
+        projectDocs,
+        envOptions,
+        this.config.userInstructions,
+      );
 
       // d. Convert history to messages
       const historyMessages = convertHistoryToMessages(this.history);
@@ -404,7 +432,7 @@ export class Session {
     // says "SESSION_END -- session closed (includes final state)". We emit
     // INPUT_COMPLETE to signal one input cycle is done, and reserve SESSION_END
     // for close() when the session is actually terminated.
-    this.emit(EventKind.INPUT_COMPLETE);
+    this.emit(EventKind.INPUT_COMPLETE, { state: this.state });
   }
 
   private async executeToolCalls(

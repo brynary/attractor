@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import type { Turn, AssistantTurn } from "../types/session.js";
 
 function isAssistantTurn(turn: Turn): turn is AssistantTurn {
@@ -26,13 +27,34 @@ export function extractToolCallSignatures(
     ) {
       const tc = turn.toolCalls[j];
       if (tc === undefined) continue;
-      signatures.push(`${tc.name}:${JSON.stringify(tc.arguments)}`);
+      signatures.push(`${tc.name}:${hashArguments(tc.arguments)}`);
     }
   }
 
   // Reverse to chronological order
   signatures.reverse();
   return signatures;
+}
+
+function hashArguments(args: unknown): string {
+  const canonical = stableStringify(args);
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => stableStringify(v)).join(",")}]`;
+  }
+
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const pairs = keys.map(
+    (k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`,
+  );
+  return `{${pairs.join(",")}}`;
 }
 
 /**

@@ -39,10 +39,9 @@ describe("extractToolCallSignatures", () => {
       makeAssistantTurn([{ name: "edit_file", arguments: { path: "b.ts" } }]),
     ];
     const sigs = extractToolCallSignatures(history, 10);
-    expect(sigs).toEqual([
-      'read_file:{"path":"a.ts"}',
-      'edit_file:{"path":"b.ts"}',
-    ]);
+    expect(sigs).toHaveLength(2);
+    expect(sigs[0]?.startsWith("read_file:")).toBe(true);
+    expect(sigs[1]?.startsWith("edit_file:")).toBe(true);
   });
 
   test("skips non-assistant turns", () => {
@@ -53,7 +52,8 @@ describe("extractToolCallSignatures", () => {
       { kind: "system", content: "note", timestamp: new Date() },
     ];
     const sigs = extractToolCallSignatures(history, 10);
-    expect(sigs).toEqual(['shell:{"cmd":"ls"}']);
+    expect(sigs).toHaveLength(1);
+    expect(sigs[0]?.startsWith("shell:")).toBe(true);
   });
 
   test("limits to requested count", () => {
@@ -69,10 +69,20 @@ describe("extractToolCallSignatures", () => {
     ];
     const sigs = extractToolCallSignatures(history, 2);
     // Should get the 2 most recent, then reverse to chronological
-    expect(sigs).toEqual([
-      'read_file:{"path":"b.ts"}',
-      'edit_file:{"path":"c.ts"}',
-    ]);
+    expect(sigs).toHaveLength(2);
+    expect(sigs[0]?.startsWith("read_file:")).toBe(true);
+    expect(sigs[1]?.startsWith("edit_file:")).toBe(true);
+  });
+
+  test("uses a stable hash for arguments regardless of key order", () => {
+    const history: Turn[] = [
+      makeAssistantTurn([{ name: "shell", arguments: { b: 2, a: 1 } }]),
+      makeToolResultsTurn(),
+      makeAssistantTurn([{ name: "shell", arguments: { a: 1, b: 2 } }]),
+    ];
+    const sigs = extractToolCallSignatures(history, 2);
+    expect(sigs).toHaveLength(2);
+    expect(sigs[0]).toBe(sigs[1]);
   });
 });
 
