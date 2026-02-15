@@ -1,0 +1,24 @@
+digraph sync {
+    graph [
+        goal="Detect and resolve drift between product docs, architecture docs, and code",
+        label="Sync"
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    detect  [label="Detect Drift",     prompt="@prompts/sync/detect.md"]
+    check   [shape=diamond,            label="Drift Found?"]
+    propose [label="Propose Changes",  prompt="@prompts/sync/propose.md"]
+    review  [shape=hexagon,            label="Review Changes"]
+    apply   [label="Apply Changes",    prompt="@prompts/sync/apply.md"]
+
+    start -> detect -> check
+    check -> exit    [condition="context.drift_found=false", label="No drift"]
+    check -> propose [condition="context.drift_found=true", label="Drift found"]
+    propose -> review
+    review -> apply    [label="[A] Accept"]
+    review -> propose  [label="[R] Revise"]
+    apply -> exit
+}

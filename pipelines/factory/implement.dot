@@ -1,0 +1,25 @@
+digraph implement {
+    graph [
+        goal="",
+        label="Implement"
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    subgraph cluster_impl {
+        label="Implementation Loop"
+        node [fidelity="full", thread_id="impl"]
+
+        plan      [label="Plan Implementation", prompt="@prompts/implement/plan.md"]
+        implement [label="Implement",            prompt="@prompts/implement/implement.md"]
+        validate  [label="Validate",             prompt="@prompts/implement/validate.md", goal_gate=true]
+        fix       [label="Fix Failures",         prompt="@prompts/implement/fix.md"]
+    }
+
+    start -> plan -> implement -> validate
+    validate -> exit [condition="outcome=success"]
+    validate -> fix  [condition="outcome!=success", label="Fix"]
+    fix -> validate
+}

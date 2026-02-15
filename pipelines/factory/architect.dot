@@ -1,0 +1,18 @@
+digraph architect {
+    graph [
+        goal="",
+        label="Architect"
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    blueprint [label="Write Blueprint",    prompt="@prompts/architect/blueprint.md"]
+    diagram   [label="Update Diagrams",    prompt="@prompts/architect/diagram.md"]
+    approve   [shape=hexagon,              label="Approve Architecture"]
+
+    start -> blueprint -> diagram -> approve
+    approve -> exit      [label="[A] Accept"]
+    approve -> blueprint [label="[R] Revise"]
+}

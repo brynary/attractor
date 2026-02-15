@@ -1,0 +1,9 @@
+Execute the implementation plan step by step.
+
+For each step:
+- Create or modify the specified files
+- Follow the conventions in the foundation blueprints
+- Write tests alongside implementation
+- Ensure each step builds on the previous one
+
+Do not deviate from the feature blueprint. If the blueprint is ambiguous, make the simplest choice that satisfies the acceptance criteria.
