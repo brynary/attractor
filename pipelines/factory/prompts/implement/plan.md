@@ -11,3 +11,5 @@ Decompose the blueprint into ordered implementation steps:
 5. Tests for each layer
 
 For each step, specify the exact files to create or modify and what changes to make.
+
+Do not plan work for anything listed in the blueprint's Out of Scope section. Every step must trace to an acceptance criterion.

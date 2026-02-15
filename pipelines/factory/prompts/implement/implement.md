@@ -6,4 +6,4 @@ For each step:
 - Write tests alongside implementation
 - Ensure each step builds on the previous one
 
-Do not deviate from the feature blueprint. If the blueprint is ambiguous, make the simplest choice that satisfies the acceptance criteria.
+Do not deviate from the feature blueprint. Do not implement anything listed in the blueprint's Out of Scope section. If the blueprint is ambiguous, make the simplest choice that satisfies the acceptance criteria.

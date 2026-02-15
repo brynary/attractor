@@ -172,6 +172,7 @@ Graph attributes are declared in a `graph [ ... ]` block or as top-level `key = 
 | `fidelity`   | String   | unset   | Override fidelity mode for the target node. Highest precedence in fidelity resolution. |
 | `thread_id`  | String   | unset   | Override thread ID for session reuse at the target node. |
 | `loop_restart` | Boolean | `false` | When `true`, terminates the current run and re-launches with a fresh log directory. |
+| `freeform`   | Boolean  | `false` | Marks this edge as the free-text input route for `wait.human` nodes. At most one per node. |
 
 ### 2.8 Shape-to-Handler-Type Mapping
 
@@ -721,13 +722,17 @@ WaitForHumanHandler:
     FUNCTION execute(node, context, graph, logs_root) -> Outcome:
         -- 1. Derive choices from outgoing edges
         edges = graph.outgoing_edges(node.id)
+        freeform_edge = NONE
         choices = []
         FOR EACH edge IN edges:
+            IF edge.attrs["freeform"] == "true":
+                freeform_edge = edge
+                CONTINUE
             label = edge.label OR edge.to_node
             key = parse_accelerator_key(label)
             choices.append(Choice(key=key, label=label, to=edge.to_node))
 
-        IF choices is empty:
+        IF choices is empty AND freeform_edge is NONE:
             RETURN Outcome(status=FAIL, failure_reason="No outgoing edges for human gate")
 
         -- 2. Build question from choices
@@ -736,6 +741,7 @@ WaitForHumanHandler:
             text=node.label OR "Select an option:",
             type=MULTIPLE_CHOICE,
             options=options,
+            allow_freeform=(freeform_edge is not NONE),
             stage=node.id
         )
 
@@ -753,12 +759,34 @@ WaitForHumanHandler:
         IF answer is SKIPPED:
             RETURN Outcome(status=FAIL, failure_reason="human skipped interaction")
 
-        -- 5. Find matching choice
+        -- 5. Try fixed-choice match first
         selected = find_choice_matching(answer, choices)
-        IF selected is NONE:
-            selected = choices[0]  -- fallback to first
 
-        -- 6. Record in context and return
+        IF selected is not NONE:
+            -- 6a. Fixed choice selected
+            RETURN Outcome(
+                status=SUCCESS,
+                suggested_next_ids=[selected.to],
+                context_updates={
+                    "human.gate.selected": selected.key,
+                    "human.gate.label": selected.label
+                }
+            )
+
+        -- 6b. No fixed choice matched — route through freeform edge
+        IF freeform_edge is not NONE:
+            RETURN Outcome(
+                status=SUCCESS,
+                suggested_next_ids=[freeform_edge.to_node],
+                context_updates={
+                    "human.gate.selected": "freeform",
+                    "human.gate.label": answer.text OR answer.value,
+                    "human.gate.text": answer.text OR answer.value
+                }
+            )
+
+        -- 6c. Fallback to first choice
+        selected = choices[0]
         RETURN Outcome(
             status=SUCCESS,
             suggested_next_ids=[selected.to],
@@ -1260,6 +1288,7 @@ Question:
     text            : String              -- the question to present to the human
     type            : QuestionType        -- determines the UI and valid answers
     options         : List<Option>        -- for MULTIPLE_CHOICE type
+    allow_freeform  : Boolean             -- when true, accept free text in addition to options
     default         : Answer or NONE      -- default if timeout/skip
     timeout_seconds : Float or NONE       -- max wait time
     stage           : String              -- originating stage name (for display)
@@ -1314,8 +1343,16 @@ ConsoleInterviewer:
         IF question.type == MULTIPLE_CHOICE:
             FOR EACH option IN question.options:
                 print("  [" + option.key + "] " + option.label)
+            IF question.allow_freeform:
+                print("  Or type a free-text response")
             response = read_input("Select: ")
-            RETURN find_matching_option(response, question.options)
+            -- try option match first, then treat as freeform text
+            match = find_matching_option(response, question.options)
+            IF match is not NONE:
+                RETURN match
+            IF question.allow_freeform:
+                RETURN Answer(text=response)
+            RETURN find_matching_option(response, question.options)  -- fallback
         IF question.type == YES_NO:
             response = read_input("[Y/N]: ")
             RETURN Answer(value=YES if response is "y" ELSE NO)
@@ -1409,6 +1446,7 @@ Severity:
 | `retry_target_exists`    | WARNING  | `retry_target` and `fallback_retry_target` must reference existing nodes. |
 | `goal_gate_has_retry`    | WARNING  | Nodes with `goal_gate=true` should have a `retry_target` or `fallback_retry_target`. |
 | `prompt_on_llm_nodes`    | WARNING  | Nodes that resolve to the codergen handler should have a `prompt` or `label` attribute. |
+| `freeform_edge_count`    | ERROR    | A `wait.human` node may have at most one outgoing edge with `freeform="true"`. |
 
 ### 7.3 Validation API
 
@@ -1782,7 +1820,7 @@ This section defines how to validate that an implementation of this spec is comp
 - [ ] Parser accepts the supported DOT subset (digraph with graph/node/edge attribute blocks)
 - [ ] Graph-level attributes (`goal`, `label`, `model_stylesheet`) are extracted correctly
 - [ ] Node attributes are parsed including multi-line attribute blocks (attributes spanning multiple lines within `[...]`)
-- [ ] Edge attributes (`label`, `condition`, `weight`) are parsed correctly
+- [ ] Edge attributes (`label`, `condition`, `weight`, `freeform`) are parsed correctly
 - [ ] Chained edges (`A -> B -> C`) produce individual edges for each pair
 - [ ] Node/edge default blocks (`node [...]`, `edge [...]`) apply to subsequent declarations
 - [ ] Subgraph blocks are flattened (contents kept, wrapper removed)
@@ -1834,7 +1872,7 @@ This section defines how to validate that an implementation of this spec is comp
 - [ ] **Start handler:** Returns SUCCESS immediately (no-op)
 - [ ] **Exit handler:** Returns SUCCESS immediately (no-op, engine checks goal gates)
 - [ ] **Codergen handler:** Expands `$goal` in prompt, calls `CodergenBackend.run()`, writes prompt.md and response.md to stage dir
-- [ ] **Wait.human handler:** Presents outgoing edge labels as choices to the interviewer, returns selected label as preferred_label
+- [ ] **Wait.human handler:** Presents outgoing edge labels as choices to the interviewer, returns selected label as preferred_label. Supports a freeform edge (`freeform="true"`) for free-text input routed to a designated target, with text stored in `human.gate.text`.
 - [ ] **Conditional handler:** Passes through; engine evaluates edge conditions against outcome/context
 - [ ] **Parallel handler:** Fans out to multiple target nodes concurrently (or sequentially as fallback)
 - [ ] **Fan-in handler:** Waits for all parallel branches to complete before proceeding
@@ -1854,6 +1892,7 @@ This section defines how to validate that an implementation of this spec is comp
 
 - [ ] Interviewer interface works: `ask(question) -> Answer`
 - [ ] Question supports types: SINGLE_SELECT, MULTI_SELECT, FREE_TEXT, CONFIRM
+- [ ] Question `allow_freeform` enables free-text input alongside fixed choices in `wait.human` gates
 - [ ] AutoApproveInterviewer always selects the first option (for automation/testing)
 - [ ] ConsoleInterviewer prompts in terminal and reads user input
 - [ ] CallbackInterviewer delegates to a provided function
@@ -1904,6 +1943,7 @@ Run this validation matrix -- each cell must pass:
 | Goal gate blocks exit when unsatisfied            | [ ] |
 | Goal gate allows exit when all satisfied          | [ ] |
 | Wait.human presents choices and routes on selection | [ ] |
+| Wait.human with freeform edge routes free-text input and stores in context | [ ] |
 | Edge selection: condition match wins over weight  | [ ] |
 | Edge selection: weight breaks ties for unconditional edges | [ ] |
 | Edge selection: lexical tiebreak as final fallback | [ ] |

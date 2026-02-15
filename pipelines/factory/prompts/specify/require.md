@@ -15,6 +15,10 @@ For each requirement:
 - **User Story:** As a [persona], I want to [action], so that I can [outcome]
 - **Acceptance Criteria:** AC-NNN-XXX.N: When [condition], the system shall [behavior]
 
+## Out of Scope
+
+Adjacent capabilities, integrations, or behaviors explicitly excluded from this feature. Downstream agents must not implement anything listed here.
+
 ## Feature Behavior & Rules
 
 Cross-requirement interactions, defaults, constraints, edge conditions.
